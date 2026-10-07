@@ -54,6 +54,7 @@ type Playback struct {
 	Mute       bool
 	Loop       bool
 	CellAspect float64
+	AudioDelay float64
 }
 
 // Settings is the full set of user-adjustable state.
@@ -226,10 +227,10 @@ var Options = []*Option{
 	{Key: "chroma", Label: "Chroma", Group: "Color", Kind: KFloat, Min: 0, Max: 0.37, Step: 0.01,
 		Help: "colourfulness of the harmony palette",
 		ptr:  func(s *Settings) any { return &s.Chroma }, Active: isHarmony},
-	{Key: "lmin", Label: "Darkest", Group: "Color", Kind: KFloat, Min: 0, Max: 1, Step: 0.02,
+	{Key: "lmin", Label: "Darkest", Group: "Color", Kind: KFloat, Min: 0, Max: 1, Step: 0.01,
 		Help: "lightness of the darkest harmony colour",
 		ptr:  func(s *Settings) any { return &s.LMin }, Active: isHarmony},
-	{Key: "lmax", Label: "Lightest", Group: "Color", Kind: KFloat, Min: 0, Max: 1, Step: 0.02,
+	{Key: "lmax", Label: "Lightest", Group: "Color", Kind: KFloat, Min: 0, Max: 1, Step: 0.01,
 		Help: "lightness of the lightest harmony colour",
 		ptr:  func(s *Settings) any { return &s.LMax }, Active: isHarmony},
 	{Key: "custom", Label: "Custom colors", Group: "Color", Kind: KList,
@@ -275,6 +276,9 @@ var Options = []*Option{
 		ptr: func(s *Settings) any { return &s.Mute }},
 	{Key: "loop", Label: "Loop", Group: "Playback", Kind: KBool,
 		Help: "default: on for clips without audio", ptr: func(s *Settings) any { return &s.Loop }},
+	{Key: "audio-delay", Label: "Audio delay", Group: "Playback", Kind: KFloat, Min: -1, Max: 1, Step: 0.01,
+		Help: "seconds to delay sound by (negative = earlier) to fix lip-sync",
+		ptr:  func(s *Settings) any { return &s.AudioDelay }},
 	{Key: "cell-aspect", Label: "Cell aspect", Group: "Playback", Kind: KFloat, Min: 0, Max: 1.5, Step: 0.01,
 		Help: "width/height of one terminal cell (0 = auto-detect)",
 		ptr:  func(s *Settings) any { return &s.CellAspect }},

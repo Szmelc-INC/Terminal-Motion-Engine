@@ -315,9 +315,9 @@ func (a *App) drawHUD() {
 		total -= len([]rune(btns[0].label)) + 2
 		btns = btns[1:]
 	}
-	bx = W - total - 1
+	rx := W - total - 1
 	for _, b := range btns {
-		bx += a.button(bx, y, b.label, b.fg, cBar, b.fn)
+		rx += a.button(rx, y, b.label, b.fg, cBar, b.fn)
 	}
 }
 

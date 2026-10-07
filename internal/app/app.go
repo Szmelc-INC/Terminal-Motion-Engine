@@ -345,6 +345,7 @@ func (a *App) applyVolume() {
 		v = 0
 	}
 	a.aud.SetVolume(v)
+	a.aud.SetDelay(a.s.AudioDelay)
 }
 
 func (a *App) fps() float64 {

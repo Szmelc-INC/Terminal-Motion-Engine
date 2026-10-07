@@ -73,7 +73,7 @@ func fromScores(n int, score []float64) *matrix {
 	m := &matrix{n: n, t: make([]int16, n*n)}
 	for i, v := range score {
 		rank := sort.SearchFloat64s(uniq, v)
-		m.t[i] = int16(math.Round(((float64(rank)+0.5)/float64(k) - 0.5) * 256))
+		m.t[i] = int16(math.Max(-128, math.Min(127, math.Round(((float64(rank)+0.5)/float64(k)-0.5)*256))))
 	}
 	return m
 }

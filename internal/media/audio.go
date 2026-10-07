@@ -40,6 +40,7 @@ type Audio struct {
 	dec     *exec.Cmd
 	gen     atomic.Int64
 	volume  atomic.Uint64 // float64 bits
+	delay   atomic.Int64  // microseconds
 	failed  atomic.Bool
 	closing atomic.Bool
 }
@@ -119,6 +120,9 @@ func (a *Audio) Failed() bool { return a.failed.Load() }
 // SetVolume sets the gain (1 = unchanged, 0 = silent).
 func (a *Audio) SetVolume(v float64) { a.volume.Store(math.Float64bits(v)) }
 
+// SetDelay shifts sound later (positive) or earlier (negative), in seconds.
+func (a *Audio) SetDelay(sec float64) { a.delay.Store(int64(sec * 1e6)) }
+
 func atempo(speed float64) string {
 	// Older ffmpeg limits each atempo instance to 0.5..2.
 	var parts []string
@@ -188,7 +192,7 @@ func (a *Audio) feed(cmd *exec.Cmd, r io.Reader, gen int64, start, speed float64
 				time.Sleep(4 * time.Millisecond)
 				continue
 			}
-			ahead := (mt - pos) / speed
+			ahead := (mt + float64(a.delay.Load())/1e6 - pos) / speed
 			if ahead > audioLead {
 				time.Sleep(time.Duration(math.Min(ahead-audioLead, 0.02) * float64(time.Second)))
 				continue

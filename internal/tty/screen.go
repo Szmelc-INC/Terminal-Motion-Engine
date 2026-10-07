@@ -309,9 +309,13 @@ func (s *Screen) Flush() (int, error) {
 			cx, cy = x+1, y
 		}
 	}
+	s.buf = b
+	s.full = false
+	if cy < 0 {
+		return 0, nil // nothing changed: leave the terminal alone
+	}
 	b = append(b, "\x1b[0m\x1b[?2026l"...)
 	s.buf = b
 	copy(s.prev, s.cur)
-	s.full = false
 	return s.out.Write(b)
 }

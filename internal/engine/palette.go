@@ -11,8 +11,11 @@ import (
 
 // Palette is a fixed set of colours with a precomputed nearest-colour table.
 // Lookups go through a 5-bit-per-channel LUT so matching a pixel is a single
-// array read; the LUT itself is matched in OKLab so "nearest" means
-// perceptually nearest.
+// array read. "Nearest" compares hue and chroma in OKLab, so colours snap to
+// the palette entry that looks closest, but compares brightness as
+// gamma-encoded luma: that is the scale dither thresholds and diffused error
+// are added on, and using the same scale for both is what keeps a dithered
+// picture from coming out brighter or darker than the original.
 type Palette struct {
 	Colors []RGB
 	lut    []uint8
@@ -30,6 +33,13 @@ var (
 	bucketLab  [][3]float32
 )
 
+// matchSpace maps a colour to the space palette distances are measured in.
+func matchSpace(c RGB) [3]float32 {
+	_, a, b := ToOklab(c)
+	y := (0.299*float64(c.R) + 0.587*float64(c.G) + 0.114*float64(c.B)) / 255
+	return [3]float32{float32(y), float32(a), float32(b)}
+}
+
 func bucketLabs() [][3]float32 {
 	bucketOnce.Do(func() {
 		bucketLab = make([][3]float32, lutSize)
@@ -37,8 +47,7 @@ func bucketLabs() [][3]float32 {
 			r := uint8(i>>10&31)<<3 | 4
 			g := uint8(i>>5&31)<<3 | 4
 			b := uint8(i&31)<<3 | 4
-			L, a, bb := ToOklab(RGB{r, g, b})
-			bucketLab[i] = [3]float32{float32(L), float32(a), float32(bb)}
+			bucketLab[i] = matchSpace(RGB{r, g, b})
 		}
 	})
 	return bucketLab
@@ -55,8 +64,7 @@ func NewPalette(colors []RGB) *Palette {
 	p := &Palette{Colors: append([]RGB(nil), colors...), lut: make([]uint8, lutSize)}
 	labs := make([][3]float32, len(p.Colors))
 	for i, c := range p.Colors {
-		L, a, b := ToOklab(c)
-		labs[i] = [3]float32{float32(L), float32(a), float32(b)}
+		labs[i] = matchSpace(c)
 	}
 	var sum float64
 	for i, a := range p.Colors {
@@ -72,7 +80,7 @@ func NewPalette(colors []RGB) *Palette {
 			sum += best
 		}
 	}
-	p.step = int(math.Max(12, math.Min(255, sum/float64(len(p.Colors)))))
+	step := math.Max(12, math.Min(255, sum/float64(len(p.Colors))))
 	buckets := bucketLabs()
 	parallel(lutSize, func(lo, hi int) {
 		for i := lo; i < hi; i++ {
@@ -87,6 +95,32 @@ func NewPalette(colors []RGB) *Palette {
 			p.lut[i] = uint8(best)
 		}
 	})
+	if len(p.Colors) <= 32 {
+		// With few colours the threshold must not be able to push the
+		// darkest or lightest colour over to its neighbour, or solid
+		// black and white areas come out speckled.
+		lo, hi := 0, 0
+		for i, c := range p.Colors {
+			if Luma(c.R, c.G, c.B) < Luma(p.Colors[lo].R, p.Colors[lo].G, p.Colors[lo].B) {
+				lo = i
+			}
+			if Luma(c.R, c.G, c.B) > Luma(p.Colors[hi].R, p.Colors[hi].G, p.Colors[hi].B) {
+				hi = i
+			}
+		}
+		reach := func(idx, dir int) float64 {
+			c := p.Colors[idx]
+			for t := 1; t < 256; t++ {
+				d := t * dir
+				if int(p.Index(clamp8(int(c.R)+d), clamp8(int(c.G)+d), clamp8(int(c.B)+d))) != idx {
+					return float64(t)
+				}
+			}
+			return 255
+		}
+		step = math.Min(step, 2*math.Min(reach(lo, 1), reach(hi, -1)))
+	}
+	p.step = int(math.Max(4, step))
 	return p
 }
 
