@@ -130,7 +130,7 @@ func (m *Menu) draw(a *App) {
 	if bodyH < 1 {
 		return
 	}
-	hint := "↑↓ select · ←→ change · Enter edit · Tab next tab · r random · Esc close"
+	hint := "↑↓ select · ←→ change · Enter edit · Tab next tab · Esc close"
 	switch m.tab {
 	case tabPresets:
 		m.drawPresets(a, x, bodyY, w, bodyH)
@@ -455,10 +455,10 @@ func (m *Menu) drawPalette(a *App, x, y, w, bodyH int) {
 	if pal == nil {
 		msg := "Truecolor output — there is no palette to show."
 		if !a.s.Color {
-			msg = "Color is off — the picture uses the terminal's own colours."
+			msg = "Color is off — the picture uses the terminal's own colors."
 		}
 		s.Text(x+2, y, msg, cFg, cPanel, 0, w-4)
-		s.Text(x+2, y+2, "Press R (or click below) for a random colour-theory palette,", cDim, cPanel, 0, w-4)
+		s.Text(x+2, y+2, "Press R (or click below) for a random color-theory palette,", cDim, cPanel, 0, w-4)
 		s.Text(x+2, y+3, "or choose one on the Color tab.", cDim, cPanel, 0, w-4)
 		a.button(x+2, y+5, "⚄ Random palette", cYellow, cHot, func(ev tty.Event) {
 			if clicked(ev) {

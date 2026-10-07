@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 var workers = func() int {
@@ -26,6 +28,7 @@ func parallel(n int, fn func(lo, hi int)) {
 		return
 	}
 	var wg sync.WaitGroup
+	var failed atomic.Value
 	chunk := (n + workers - 1) / workers
 	for lo := 0; lo < n; lo += chunk {
 		hi := lo + chunk
@@ -35,10 +38,20 @@ func parallel(n int, fn func(lo, hi int)) {
 		wg.Add(1)
 		go func(lo, hi int) {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					failed.Store(fmt.Sprint(r))
+				}
+			}()
 			fn(lo, hi)
 		}(lo, hi)
 	}
 	wg.Wait()
+	// Re-raise on the caller's goroutine, where the player can restore
+	// the terminal before reporting it.
+	if v := failed.Load(); v != nil {
+		panic(v)
+	}
 }
 
 func clamp8(v int) uint8 {

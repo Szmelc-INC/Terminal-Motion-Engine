@@ -9,9 +9,9 @@ import (
 	"sync"
 )
 
-// Palette is a fixed set of colours with a precomputed nearest-colour table.
+// Palette is a fixed set of colors with a precomputed nearest-color table.
 // Lookups go through a 5-bit-per-channel LUT so matching a pixel is a single
-// array read. "Nearest" compares hue and chroma in OKLab, so colours snap to
+// array read. "Nearest" compares hue and chroma in OKLab, so colors snap to
 // the palette entry that looks closest, but compares brightness as
 // gamma-encoded luma: that is the scale dither thresholds and diffused error
 // are added on, and using the same scale for both is what keeps a dithered
@@ -22,7 +22,7 @@ type Palette struct {
 	step   int
 }
 
-// spread is the typical distance between neighbouring palette colours; it
+// spread is the typical distance between neighbouring palette colors; it
 // is how far an ordered-dither threshold needs to push a pixel.
 func (p *Palette) spread() int { return p.step }
 
@@ -33,7 +33,7 @@ var (
 	bucketLab  [][3]float32
 )
 
-// matchSpace maps a colour to the space palette distances are measured in.
+// matchSpace maps a color to the space palette distances are measured in.
 func matchSpace(c RGB) [3]float32 {
 	_, a, b := ToOklab(c)
 	y := (0.299*float64(c.R) + 0.587*float64(c.G) + 0.114*float64(c.B)) / 255
@@ -53,7 +53,7 @@ func bucketLabs() [][3]float32 {
 	return bucketLab
 }
 
-// NewPalette builds a palette (at most 256 colours) and its lookup table.
+// NewPalette builds a palette (at most 256 colors) and its lookup table.
 func NewPalette(colors []RGB) *Palette {
 	if len(colors) > 256 {
 		colors = colors[:256]
@@ -96,8 +96,8 @@ func NewPalette(colors []RGB) *Palette {
 		}
 	})
 	if len(p.Colors) <= 32 {
-		// With few colours the threshold must not be able to push the
-		// darkest or lightest colour over to its neighbour, or solid
+		// With few colors the threshold must not be able to push the
+		// darkest or lightest color over to its neighbour, or solid
 		// black and white areas come out speckled.
 		lo, hi := 0, 0
 		for i, c := range p.Colors {
@@ -124,12 +124,12 @@ func NewPalette(colors []RGB) *Palette {
 	return p
 }
 
-// Index returns the palette index nearest to the given colour.
+// Index returns the palette index nearest to the given color.
 func (p *Palette) Index(r, g, b uint8) uint8 {
 	return p.lut[uint32(r>>3)<<10|uint32(g>>3)<<5|uint32(b>>3)]
 }
 
-// Nearest returns the palette colour nearest to the given colour.
+// Nearest returns the palette color nearest to the given color.
 func (p *Palette) Nearest(r, g, b uint8) RGB { return p.Colors[p.Index(r, g, b)] }
 
 func hexes(s string) []RGB {
@@ -197,7 +197,7 @@ func PaletteChoices() []string {
 	return out
 }
 
-// Schemes are the colour-theory generators available to the harmony palette.
+// Schemes are the color-theory generators available to the harmony palette.
 var Schemes = []string{
 	"monochromatic", "analogous", "complementary", "split-complementary",
 	"triadic", "tetradic", "square", "hexadic", "hue-shift", "golden", "rainbow",
@@ -235,7 +235,7 @@ func schemeHues(scheme string, n int) []float64 {
 	return []float64{0}
 }
 
-// Harmony generates n colours in OKLCH. Lightness runs from lmin to lmax so
+// Harmony generates n colors in OKLCH. Lightness runs from lmin to lmax so
 // the palette always spans dark to light (which is what keeps an image
 // readable), while hues are dealt out according to the chosen scheme.
 func Harmony(scheme string, hue, chroma, lmin, lmax float64, n int) []RGB {
@@ -285,7 +285,7 @@ func GrayRamp(n int) []RGB {
 	return out
 }
 
-// Cube returns a uniform RGB cube with at most n colours. The split favours
+// Cube returns a uniform RGB cube with at most n colors. The split favours
 // green, then red, then blue, matching the eye's sensitivity.
 func Cube(n int) []RGB {
 	if n < 2 {
@@ -324,12 +324,12 @@ func Cube(n int) []RGB {
 	return out
 }
 
-// Ansi16 returns the standard xterm 16-colour palette.
+// Ansi16 returns the standard xterm 16-color palette.
 func Ansi16() []RGB {
 	return hexes("000000 cd0000 00cd00 cdcd00 0000ee cd00cd 00cdcd e5e5e5 7f7f7f ff0000 00ff00 ffff00 5c5cff ff00ff 00ffff ffffff")
 }
 
-// Xterm256 returns the xterm 256-colour palette.
+// Xterm256 returns the xterm 256-color palette.
 func Xterm256() []RGB {
 	out := Ansi16()
 	steps := [6]uint8{0, 95, 135, 175, 215, 255}
@@ -360,13 +360,13 @@ func XtermPalette() *Palette {
 	return xtermPal
 }
 
-// AnsiPalette returns the shared 16-colour palette (with LUT).
+// AnsiPalette returns the shared 16-color palette (with LUT).
 func AnsiPalette() *Palette {
 	ansiOnce.Do(func() { ansiPal = NewPalette(Ansi16()) })
 	return ansiPal
 }
 
-// MedianCut derives an n-colour palette from RGB24 pixel data.
+// MedianCut derives an n-color palette from RGB24 pixel data.
 func MedianCut(pix []byte, n int) []RGB {
 	if n < 1 {
 		n = 1
@@ -505,7 +505,7 @@ func paletteKey(l *Look) string {
 }
 
 // RandomHarmony fills in the harmony fields of a look with a random but
-// usable colour scheme.
+// usable color scheme.
 func RandomHarmony(l *Look, rng *rand.Rand) {
 	l.Palette = PalHarmony
 	l.Scheme = Schemes[rng.Intn(len(Schemes))]

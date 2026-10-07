@@ -1,4 +1,4 @@
-// Package engine turns raw RGB frames into terminal cells: colour
+// Package engine turns raw RGB frames into terminal cells: color
 // adjustment, palette quantisation, dithering and glyph composition.
 package engine
 
@@ -8,13 +8,13 @@ import (
 	"strings"
 )
 
-// RGB is an 8-bit sRGB colour.
+// RGB is an 8-bit sRGB color.
 type RGB struct{ R, G, B uint8 }
 
-// U32 packs the colour as 0xRRGGBB.
+// U32 packs the color as 0xRRGGBB.
 func (c RGB) U32() uint32 { return uint32(c.R)<<16 | uint32(c.G)<<8 | uint32(c.B) }
 
-// Hex formats the colour as #rrggbb.
+// Hex formats the color as #rrggbb.
 func (c RGB) Hex() string { return fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B) }
 
 // FromU32 unpacks a 0xRRGGBB value.
@@ -27,7 +27,7 @@ func ParseHex(s string) (RGB, error) {
 		s = string([]byte{s[0], s[0], s[1], s[1], s[2], s[2]})
 	}
 	if len(s) != 6 {
-		return RGB{}, fmt.Errorf("invalid colour %q (want #rrggbb)", s)
+		return RGB{}, fmt.Errorf("invalid color %q (want #rrggbb)", s)
 	}
 	var v uint32
 	for _, ch := range []byte(s) {
@@ -40,7 +40,7 @@ func ParseHex(s string) (RGB, error) {
 		case ch >= 'A' && ch <= 'F':
 			d = ch - 'A' + 10
 		default:
-			return RGB{}, fmt.Errorf("invalid colour %q (want #rrggbb)", s)
+			return RGB{}, fmt.Errorf("invalid color %q (want #rrggbb)", s)
 		}
 		v = v<<4 | uint32(d)
 	}
@@ -100,8 +100,8 @@ func to8(f float64) uint8 {
 	return uint8(v)
 }
 
-// FromOklch builds an sRGB colour from lightness (0..1), chroma (≈0..0.37)
-// and hue in degrees. Out-of-gamut colours are pulled in by reducing chroma,
+// FromOklch builds an sRGB color from lightness (0..1), chroma (≈0..0.37)
+// and hue in degrees. Out-of-gamut colors are pulled in by reducing chroma,
 // which keeps hue and lightness intact.
 func FromOklch(L, C, hue float64) RGB {
 	if L < 0 {
@@ -134,7 +134,7 @@ func FromOklch(L, C, hue float64) RGB {
 	return RGB{to8(r), to8(g), to8(b)}
 }
 
-// Luma returns the Rec.601 luma of a colour in 0..255.
+// Luma returns the Rec.601 luma of a color in 0..255.
 func Luma(r, g, b uint8) uint8 {
 	return uint8((uint32(r)*77 + uint32(g)*150 + uint32(b)*29 + 128) >> 8)
 }

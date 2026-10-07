@@ -15,7 +15,7 @@ import (
 // Cell re-exports engine.Cell for callers that only draw UI.
 type Cell = engine.Cell
 
-// ColDefault is the terminal's default colour.
+// ColDefault is the terminal's default color.
 const ColDefault = engine.ColDefault
 
 var numStr [256]string
@@ -32,7 +32,7 @@ func init() {
 // in a single write. That is what keeps playback free of flicker.
 type Screen struct {
 	W, H  int
-	Depth int // 24, 8 or 4 bit colour
+	Depth int // 24, 8 or 4 bit color
 
 	cur, prev []Cell
 	out       io.Writer
@@ -45,7 +45,7 @@ func NewScreen(out io.Writer, depth int) *Screen {
 	return &Screen{out: out, Depth: depth, full: true}
 }
 
-// DetectDepth guesses the terminal's colour depth from the environment.
+// DetectDepth guesses the terminal's color depth from the environment.
 func DetectDepth() int {
 	ct := strings.ToLower(os.Getenv("COLORTERM"))
 	term := os.Getenv("TERM")

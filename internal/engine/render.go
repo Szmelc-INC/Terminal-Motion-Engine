@@ -9,7 +9,7 @@ type Cell struct {
 	Attr   uint8
 }
 
-// ColDefault selects the terminal's own foreground/background colour.
+// ColDefault selects the terminal's own foreground/background color.
 const ColDefault uint32 = 1 << 24
 
 // Cell attributes.
@@ -80,7 +80,7 @@ func glyphs(mode string) []rune {
 // Renderer converts RGB24 frames into cells. It keeps scratch buffers and
 // the current palette between frames; it is not safe for concurrent use.
 type Renderer struct {
-	// TermDepth is the colour depth of the output terminal (24, 8 or 4
+	// TermDepth is the color depth of the output terminal (24, 8 or 4
 	// bits). Below 24 the picture is quantised to what the terminal can
 	// show, so dithering still applies.
 	TermDepth int
@@ -272,7 +272,7 @@ func (r *Renderer) resolvePalette(l *Look, block bool) *Palette {
 		return nil
 	}
 	if block && len(colors) == 1 {
-		// A single colour cannot draw a picture out of solid blocks.
+		// A single color cannot draw a picture out of solid blocks.
 		colors = []RGB{{0, 0, 0}, colors[0]}
 	}
 	r.pal, r.palKey = NewPalette(colors), key
@@ -371,7 +371,7 @@ func (r *Renderer) composeHalf(w int, dst []Cell, cols, rows int) {
 	})
 }
 
-// composeFit reduces each cell's sub-pixels to two colours: it splits them
+// composeFit reduces each cell's sub-pixels to two colors: it splits them
 // along the channel with the widest range and averages each side.
 func (r *Renderer) composeFit(w int, mode string, pal *Palette, dst []Cell, cols, rows int) {
 	sx, sy := SubCells(mode)
@@ -461,7 +461,7 @@ func (r *Renderer) composeBraille(w, h int, l *Look, dst []Cell, cols, rows, fra
 	r.dith.gray(lum, w, h, 2, l, frame, r.lvl)
 	r.small = grow(r.small, cols*rows*3)
 	work, lvl, small := r.work, r.lvl, r.small
-	masks := dst // reuse: stash the mask in Attr until colours are known
+	masks := dst // reuse: stash the mask in Attr until colors are known
 	parallel(rows, func(lo, hi int) {
 		for cy := lo; cy < hi; cy++ {
 			for cx := 0; cx < cols; cx++ {

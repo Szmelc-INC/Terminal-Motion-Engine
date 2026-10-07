@@ -44,7 +44,7 @@ var extras = map[string]extra{
 	"hwaccel":    {false, "let ffmpeg use hardware decoding"},
 	"hud":        {true, "HUD visibility: auto, on, off"},
 	"stats":      {false, "show the performance overlay"},
-	"depth":      {true, "terminal colour depth: 24, 8 or 4 (default: auto-detect)"},
+	"depth":      {true, "terminal color depth: 24, 8 or 4 (default: auto-detect)"},
 	"start":      {true, "start position in seconds"},
 	"at":         {true, "snap: time of the frame to print, seconds"},
 	"size":       {true, "snap/bench: grid size as COLSxROWS"},
@@ -429,7 +429,7 @@ func cmdBench(c *cli, store *app.Store) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s: %dx%d %.4g fps → grid %dx%d, %d frames, %d-bit colour\n\n",
+	fmt.Printf("%s: %dx%d %.4g fps → grid %dx%d, %d frames, %d-bit color\n\n",
 		c.args[0], info.Width, info.Height, info.FPS, cols, rows, n, depth)
 	fmt.Printf("%-9s %-17s %-12s %9s %9s %9s %10s %9s\n",
 		"mode", "dither", "palette", "decode", "render", "encode", "KiB/frame", "max fps")
@@ -516,9 +516,9 @@ func cmdPalettes(c *cli) error {
 		line(p.Name, p.Colors)
 	}
 	fmt.Println("\nGenerated palettes:")
-	fmt.Println("  truecolor         no palette, full 24-bit colour")
-	fmt.Println("  harmony           colour-theory palette: --scheme, --hue, --chroma, --lmin, --lmax, --colors")
-	fmt.Println("  adaptive          --colors most representative colours of the picture (median cut)")
+	fmt.Println("  truecolor         no palette, full 24-bit color")
+	fmt.Println("  harmony           color-theory palette: --scheme, --hue, --chroma, --lmin, --lmax, --colors")
+	fmt.Println("  adaptive          --colors most representative colors of the picture (median cut)")
 	fmt.Println("  gray / cube       --colors greys / uniform RGB cube")
 	fmt.Println("  ansi16 / xterm256 the terminal's standard palettes")
 	fmt.Println("  custom            your own: --custom '#1a1c2c,#f4f4f4,#ef7d57'")
@@ -644,14 +644,14 @@ Usage:
   termo bench [options] <file>      measure render speed (--frames N, --size, --all)
   termo info  <file>                show stream information
   termo presets [list|show|save|edit|rename|rm|path] [name]
-  termo palettes                    list palettes and colour schemes
+  termo palettes                    list palettes and color schemes
   termo options                     list every look option with its values
 
 Common options (termo options lists all of them):
   -m, --mode MODE        half | quad | sextant | braille | ascii
   -p, --palette NAME     truecolor | harmony | adaptive | gray | cube | custom | gameboy | pico8 | …
   -c, --colors N         palette size, 1-256
-      --scheme NAME      colour-theory scheme for --palette harmony
+      --scheme NAME      color-theory scheme for --palette harmony
   -d, --dither NAME      none | bayer4 | bluenoise | halftone | floyd-steinberg | atkinson | …
   -P, --preset NAME      start from a preset
   -r, --random           start with a randomized look (--seed N to repeat it)

@@ -55,7 +55,7 @@ func TestPaletteNearest(t *testing.T) {
 			t.Errorf("Nearest(%v) = %v, want %v", in, got, want)
 		}
 	}
-	// Every palette colour must map to itself.
+	// Every palette color must map to itself.
 	for _, np := range NamedPalettes {
 		pal := NewPalette(np.Colors)
 		for _, c := range np.Colors {
@@ -73,7 +73,7 @@ func TestGenerators(t *testing.T) {
 		for _, sc := range Schemes {
 			cols := Harmony(sc, 210, 0.15, 0.1, 0.95, n)
 			if len(cols) != n {
-				t.Fatalf("Harmony(%s, %d) returned %d colours", sc, n, len(cols))
+				t.Fatalf("Harmony(%s, %d) returned %d colors", sc, n, len(cols))
 			}
 			if n > 1 {
 				lo := Luma(cols[0].R, cols[0].G, cols[0].B)
@@ -84,23 +84,23 @@ func TestGenerators(t *testing.T) {
 			}
 		}
 		if got := len(GrayRamp(n)); got != n {
-			t.Errorf("GrayRamp(%d) = %d colours", n, got)
+			t.Errorf("GrayRamp(%d) = %d colors", n, got)
 		}
 		if got := len(Cube(n)); got > max(n, 2) || got < 1 {
-			t.Errorf("Cube(%d) = %d colours", n, got)
+			t.Errorf("Cube(%d) = %d colors", n, got)
 		}
 	}
 	if got := len(Cube(8)); got != 8 {
-		t.Errorf("Cube(8) = %d colours, want 8", got)
+		t.Errorf("Cube(8) = %d colors, want 8", got)
 	}
 	if got := len(Xterm256()); got != 256 {
-		t.Errorf("Xterm256 = %d colours", got)
+		t.Errorf("Xterm256 = %d colors", got)
 	}
 	// Different schemes must give different hues.
 	a := Harmony("complementary", 30, 0.2, 0.3, 0.8, 4)
 	b := Harmony("monochromatic", 30, 0.2, 0.3, 0.8, 4)
 	if a[1] == b[1] {
-		t.Error("complementary and monochromatic produced the same colour")
+		t.Error("complementary and monochromatic produced the same color")
 	}
 }
 
@@ -112,7 +112,7 @@ func TestMedianCut(t *testing.T) {
 	}
 	cols := MedianCut(pix, 2)
 	if len(cols) != 2 {
-		t.Fatalf("got %d colours", len(cols))
+		t.Fatalf("got %d colors", len(cols))
 	}
 	seenRed, seenBlue := false, false
 	for _, c := range cols {
@@ -248,7 +248,7 @@ func TestRenderModes(t *testing.T) {
 				t.Errorf("%s color=%v: white and black rows render identically (%+v)", mode, color, top)
 			}
 			if !color && (top.Fg != ColDefault || top.Bg != ColDefault) {
-				t.Errorf("%s mono: emitted colours %x/%x", mode, top.Fg, top.Bg)
+				t.Errorf("%s mono: emitted colors %x/%x", mode, top.Fg, top.Bg)
 			}
 		}
 	}
@@ -308,7 +308,7 @@ func TestRenderPaletteOnly(t *testing.T) {
 	}
 }
 
-func TestSingleColourPaletteStaysVisible(t *testing.T) {
+func TestSingleColorPaletteStaysVisible(t *testing.T) {
 	l := DefaultLook()
 	l.Palette, l.Colors = PalHarmony, 1
 	pix := solid(4, 4, RGB{})
@@ -320,7 +320,7 @@ func TestSingleColourPaletteStaysVisible(t *testing.T) {
 	cells := make([]Cell, 8)
 	r.Render(pix, 4, 4, &l, cells, 4, 2, 0)
 	if cells[0].Bg == cells[4].Bg {
-		t.Error("a 1-colour palette rendered a flat picture in block mode")
+		t.Error("a 1-color palette rendered a flat picture in block mode")
 	}
 }
 
@@ -354,7 +354,7 @@ func TestOptions(t *testing.T) {
 		t.Error("out-of-range number accepted")
 	}
 	if err := FindOption("custom").Set(&s, "#fff, 000;#12345g"); err == nil {
-		t.Error("bad colour list accepted")
+		t.Error("bad color list accepted")
 	}
 	if err := FindOption("custom").Set(&s, "#fff, 000"); err != nil || len(s.Custom) != 2 || s.Custom[0] != "#ffffff" {
 		t.Errorf("custom list = %v, %v", s.Custom, err)

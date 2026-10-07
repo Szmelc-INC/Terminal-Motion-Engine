@@ -98,7 +98,8 @@ func (a *App) hudVisible() bool {
 	case "off":
 		return false
 	}
-	return !a.isPlaying() || a.menu != nil || time.Since(a.lastActivity) < 2500*time.Millisecond
+	paused := !a.isPlaying() && !a.info.Still
+	return paused || a.menu != nil || time.Since(a.lastActivity) < 2500*time.Millisecond
 }
 
 func (a *App) draw() {
@@ -219,6 +220,9 @@ func (a *App) drawHUD() {
 	}
 	if a.ended && !a.info.Still {
 		play = "↺"
+	}
+	if a.info.Still {
+		play = "■"
 	}
 	x += a.button(x, y, play, cGreen, cBar, func(ev tty.Event) {
 		if clicked(ev) {

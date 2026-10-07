@@ -26,7 +26,7 @@ type Config struct {
 	AudioSink string
 	HWAccel   bool
 	HUD       string // auto, on, off
-	Depth     int    // terminal colour depth: 24, 8, 4
+	Depth     int    // terminal color depth: 24, 8, 4
 	Start     float64
 	Stats     bool
 	Store     *Store
