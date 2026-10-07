@@ -21,13 +21,14 @@ type Frame struct {
 // resizing means starting a new one.
 type VideoOpts struct {
 	Path         string
-	Start        float64 // seek position in the file, seconds
-	Base         float64 // timeline position of the first frame
-	W, H         int     // output size in pixels
-	FPS          float64 // output frame rate
-	CropX, CropY float64 // fraction of the source to keep (1 = all)
-	Loop         bool    // loop the input seamlessly
-	Still        bool    // single picture
+	PreInput     []string // ffmpeg options placed before the input
+	Start        float64  // seek position in the file, seconds
+	Base         float64  // timeline position of the first frame
+	W, H         int      // output size in pixels
+	FPS          float64  // output frame rate
+	CropX, CropY float64  // fraction of the source to keep (1 = all)
+	Loop         bool     // loop the input seamlessly
+	Still        bool     // single picture
 	HWAccel      bool
 }
 
@@ -66,6 +67,7 @@ func StartVideo(o VideoOpts) (*Video, error) {
 	if o.Start > 0 && !o.Still {
 		args = append(args, "-ss", ftoa(o.Start))
 	}
+	args = append(args, o.PreInput...)
 	args = append(args, "-i", o.Path, "-map", "0:v:0", "-an", "-sn", "-dn")
 	var vf []string
 	if !o.Still {

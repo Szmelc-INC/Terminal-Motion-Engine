@@ -160,15 +160,17 @@ type Browser struct {
 
 func (a *App) openBrowser() {
 	dir, _ := os.Getwd()
-	if a.loaded {
-		if abs, err := filepath.Abs(a.info.Path); err == nil {
+	cur := ""
+	if a.loaded && a.fileIdx < len(a.files) {
+		cur = a.files[a.fileIdx]
+		if abs, err := filepath.Abs(cur); err == nil {
 			dir = filepath.Dir(abs)
 		}
 	}
 	b := &Browser{}
 	b.load(dir)
-	if a.loaded {
-		base := filepath.Base(a.info.Path)
+	if cur != "" {
+		base := filepath.Base(cur)
 		for i, it := range b.items {
 			if it.name == base {
 				b.sel = i

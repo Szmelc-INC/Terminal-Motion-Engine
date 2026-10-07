@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"syscall"
@@ -384,7 +383,7 @@ func (a *App) restartVideo(pos float64) {
 	a.pending, a.eof = nil, false
 	k := a.wantKey()
 	v, err := media.StartVideo(media.VideoOpts{
-		Path: k.path, Start: a.wrap(pos), Base: pos, W: k.w, H: k.h, FPS: k.fps,
+		Path: k.path, PreInput: a.info.PreInput, Start: a.wrap(pos), Base: pos, W: k.w, H: k.h, FPS: k.fps,
 		CropX: k.cropX, CropY: k.cropY, Loop: k.loop, Still: a.info.Still, HWAccel: a.cfg.HWAccel,
 	})
 	if err != nil {
@@ -708,5 +707,5 @@ func (a *App) title() string {
 	if !a.loaded {
 		return "termo"
 	}
-	return tty.Clean(filepath.Base(a.info.Path))
+	return tty.Clean(a.info.Name)
 }

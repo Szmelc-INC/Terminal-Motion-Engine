@@ -295,7 +295,7 @@ func cmdPlay(c *cli, store *app.Store) error {
 	}
 	for _, f := range c.args {
 		if _, err := os.Stat(f); err != nil {
-			return fmt.Errorf("cannot open %s: no such file", f)
+			return fmt.Errorf("cannot open %s: no such file or folder", f)
 		}
 	}
 	sink, _ := c.get("audio-sink")
@@ -340,7 +340,7 @@ func grab(info media.Info, s engine.Settings, cols, rows int, at float64, n int)
 		fps = s.FPS
 	}
 	v, err := media.StartVideo(media.VideoOpts{
-		Path: info.Path, Start: at, Base: at, W: g.W, H: g.H, FPS: fps,
+		Path: info.Path, PreInput: info.PreInput, Start: at, Base: at, W: g.W, H: g.H, FPS: fps,
 		CropX: g.CropX, CropY: g.CropY, Still: info.Still, Loop: n > 1 && !info.Still,
 	})
 	if err != nil {
@@ -639,7 +639,7 @@ func usage(w io.Writer) {
 	fmt.Fprintf(w, `termo %s — play GIFs and videos in the terminal as ASCII / ANSI art
 
 Usage:
-  termo [options] [file...]         play (no file: open the file browser)
+  termo [options] [file...]         play files or folders of frames (no file: file browser)
   termo snap  [options] <file>      print a single frame (--at SEC, --size COLSxROWS)
   termo bench [options] <file>      measure render speed (--frames N, --size, --all)
   termo info  <file>                show stream information

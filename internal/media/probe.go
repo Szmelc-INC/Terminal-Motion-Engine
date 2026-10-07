@@ -9,17 +9,21 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 // Info describes a media file.
 type Info struct {
-	Path     string
-	Width    int     // display width in pixels (after rotation and SAR)
-	Height   int     // display height in pixels
-	FPS      float64 // source frame rate
-	Duration float64 // seconds; 0 when unknown (e.g. a still image)
+	Path     string   // what ffmpeg is given as its input
+	Name     string   // what to call it on screen
+	PreInput []string // ffmpeg options that must precede the input
+	Width    int      // display width in pixels (after rotation and SAR)
+	Height   int      // display height in pixels
+	FPS      float64  // source frame rate
+	Duration float64  // seconds; 0 when unknown (e.g. a still image)
 	Frames   int
 	HasAudio bool
 	Codec    string
@@ -62,11 +66,11 @@ func ratio(s string) float64 {
 
 // Probe reads stream information with ffprobe.
 func Probe(path string) (Info, error) {
-	info := Info{Path: path}
+	info := Info{Path: path, Name: filepath.Base(path)}
 	if st, err := os.Stat(path); err != nil {
 		return info, err
 	} else if st.IsDir() {
-		return info, fmt.Errorf("%s is a directory", path)
+		return probeDir(path)
 	}
 	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path)
 	var stderr bytes.Buffer
@@ -150,5 +154,53 @@ func Probe(path string) (Info, error) {
 			info.Duration = 0
 		}
 	}
+	return info, nil
+}
+
+// SequenceFPS is the frame rate assumed for a folder of numbered pictures,
+// matching the default of the original termo script.
+const SequenceFPS = 30
+
+var globEscaper = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`)
+
+// probeDir treats a folder of pictures (frame_0001.jpg, …) as a clip, the
+// way termo 1.x stored videos.
+func probeDir(dir string) (Info, error) {
+	info := Info{Name: filepath.Base(filepath.Clean(dir)) + "/"}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return info, err
+	}
+	byExt := map[string][]string{}
+	for _, e := range ents {
+		ext := filepath.Ext(e.Name())
+		switch strings.ToLower(ext) {
+		case ".jpg", ".jpeg", ".png", ".bmp", ".webp":
+			if !e.IsDir() {
+				byExt[ext] = append(byExt[ext], e.Name())
+			}
+		}
+	}
+	var ext string
+	for e, names := range byExt {
+		if len(names) > len(byExt[ext]) || (len(names) == len(byExt[ext]) && e < ext) {
+			ext = e
+		}
+	}
+	names := byExt[ext]
+	if len(names) == 0 {
+		return info, fmt.Errorf("%s is a directory with no picture frames in it", dir)
+	}
+	sort.Strings(names)
+	first, err := Probe(filepath.Join(dir, names[0]))
+	if err != nil {
+		return info, err
+	}
+	info.Path = filepath.Join(globEscaper.Replace(dir), "*"+ext)
+	info.PreInput = []string{"-framerate", strconv.Itoa(SequenceFPS), "-pattern_type", "glob"}
+	info.Width, info.Height, info.Codec = first.Width, first.Height, first.Codec
+	info.FPS, info.Frames = SequenceFPS, len(names)
+	info.Duration = float64(len(names)) / SequenceFPS
+	info.Still = len(names) == 1
 	return info, nil
 }

@@ -60,6 +60,7 @@ the terminal can show (`--depth 8` / `--depth 4` forces it).
 termo clip.mp4                       # play
 termo                                # no file: open the file browser
 termo a.gif b.mp4 c.webm             # playlist (n / N to switch)
+termo frames/gun                     # a folder of numbered pictures (termo 1.x frame dirs), 30 fps
 termo -m braille -p matrix clip.mp4  # pick a look up front
 termo -P gameboy clip.mp4            # start from a preset
 termo -r clip.mp4                    # start with a random look
