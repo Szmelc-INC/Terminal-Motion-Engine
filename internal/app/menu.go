@@ -25,6 +25,7 @@ type Menu struct {
 	placed       bool
 	grabX, grabY int
 	scroll       int
+	w            int // width at the last draw
 }
 
 func newMenu() *Menu { return &Menu{} }
@@ -77,7 +78,8 @@ func (m *Menu) setTab(t int) {
 
 func (m *Menu) draw(a *App) {
 	s := a.scr
-	w, h := min(66, s.W), min(22, s.H)
+	w, h := a.dim(66, 22)
+	m.w = w
 	if !m.placed {
 		m.x, m.y, m.placed = (s.W-w)/2, max(0, (s.H-h)/2-1), true
 	}
@@ -163,7 +165,8 @@ func (m *Menu) drawOptions(a *App, x, y, w, bodyH int) {
 		m.sel[m.tab] = 0
 	}
 	first := m.visible(len(opts), bodyH)
-	wx, ww := x+18, w-20
+	lw := 16 + (w-66)/4
+	wx, ww := x+lw+2, w-lw-4
 	for i := first; i < len(opts) && i-first < bodyH; i++ {
 		o, i, ry := opts[i], i, y+i-first
 		bg := cPanel
@@ -175,7 +178,7 @@ func (m *Menu) drawOptions(a *App, x, y, w, bodyH int) {
 		if !o.IsActive(&a.s) {
 			fg = cDim
 		}
-		s.Text(x+2, ry, o.Label, fg, bg, 0, 15)
+		s.Text(x+2, ry, o.Label, fg, bg, 0, lw-1)
 		a.on(x+1, ry, w-2, 1, func(ev tty.Event, _, _ int) {
 			switch ev.Action {
 			case tty.MouseMove, tty.MousePress:
@@ -638,7 +641,7 @@ func (m *Menu) key(a *App, ev tty.Event) bool {
 		}
 		if m.tab == tabPalette {
 			if p := a.rend.Palette(); p != nil {
-				_, per := m.swatchLayout(len(p.Colors), min(66, a.scr.W))
+				_, per := m.swatchLayout(len(p.Colors), m.w)
 				if t := m.sel[m.tab] + d*per; t >= 0 && t < len(p.Colors) {
 					m.sel[m.tab] = t
 				}

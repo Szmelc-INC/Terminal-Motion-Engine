@@ -30,6 +30,7 @@ type Config struct {
 	Stats     bool
 	Store     *Store
 	Preset    string // name of the preset the settings came from
+	UIScale   int    // interface size: 0 compact, 1 normal, 2 large, 3 huge
 }
 
 type hit struct {
@@ -42,6 +43,7 @@ type decKey struct {
 	w, h         int
 	fps          float64
 	cropX, cropY float64
+	panX, panY   float64
 	loop         bool
 }
 
@@ -108,8 +110,14 @@ type App struct {
 	lastClickY   int
 	dbl          bool
 
+	// async carries results of background work (searches, downloads…) back
+	// to the main loop, which owns every other field.
+	async chan func()
+	ui    int // interface size, see Config.UIScale
+
 	menu    *Menu
 	help    bool
+	helpTop int
 	browser *Browser
 	prompt  *Prompt
 	confirm *Confirm
@@ -140,6 +148,7 @@ func Run(cfg Config) (err error) {
 		cfg: cfg, term: t, store: cfg.Store, s: cfg.Settings, files: cfg.Files,
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())), hud: cfg.HUD, stats: cfg.Stats,
 		preset: cfg.Preset, speed: cfg.Settings.Speed, lastActivity: time.Now(), mx: -1, my: -1,
+		async: make(chan func(), 64), ui: cfg.UIScale,
 	}
 	if a.hud == "" {
 		a.hud = "auto"
@@ -198,6 +207,9 @@ func Run(cfg Config) (err error) {
 			} else {
 				a.pending = f
 			}
+		case fn := <-a.async:
+			fn()
+			a.dirty = true
 		case sig := <-sigs:
 			if sig != syscall.SIGWINCH {
 				return nil
@@ -370,9 +382,16 @@ func (a *App) aspect() float64 {
 
 // wantKey works out the decode geometry for the current screen and look.
 func (a *App) wantKey() decKey {
-	g := Fit(a.info.Aspect(), a.s.Look, a.scr.W, a.scr.H, a.aspect())
-	return decKey{path: a.info.Path, fps: a.fps(), w: g.W, h: g.H, cropX: g.CropX, cropY: g.CropY,
+	g := FitZoom(a.info.Aspect(), a.s.Look, a.scr.W, a.scr.H, a.aspect(), a.s.Zoom)
+	k := decKey{path: a.info.Path, fps: a.fps(), w: g.W, h: g.H, cropX: g.CropX, cropY: g.CropY,
 		loop: a.s.Loop && !a.info.Still}
+	if g.CropX < 0.999 {
+		k.panX = a.s.PanX
+	}
+	if g.CropY < 0.999 {
+		k.panY = a.s.PanY
+	}
+	return k
 }
 
 func (a *App) restartVideo(pos float64) {
@@ -384,7 +403,8 @@ func (a *App) restartVideo(pos float64) {
 	k := a.wantKey()
 	v, err := media.StartVideo(media.VideoOpts{
 		Path: k.path, PreInput: a.info.PreInput, Start: a.wrap(pos), Base: pos, W: k.w, H: k.h, FPS: k.fps,
-		CropX: k.cropX, CropY: k.cropY, Loop: k.loop, Still: a.info.Still, HWAccel: a.cfg.HWAccel,
+		CropX: k.cropX, CropY: k.cropY, PanX: k.panX, PanY: k.panY, Loop: k.loop, Still: a.info.Still,
+		HWAccel: a.cfg.HWAccel,
 	})
 	if err != nil {
 		a.say(err.Error(), 4*time.Second)

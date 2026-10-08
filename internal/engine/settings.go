@@ -55,6 +55,12 @@ type Playback struct {
 	Loop       bool
 	CellAspect float64
 	AudioDelay float64
+
+	// Zoom is the size of the picture relative to the terminal: below 1 it
+	// shrinks, above 1 it grows and is cropped once it fills the screen.
+	// It is independent of the interface size.
+	Zoom       float64
+	PanX, PanY float64 // -1..1: which part of a cropped picture is shown
 }
 
 // Settings is the full set of user-adjustable state.
@@ -146,7 +152,7 @@ func DefaultLook() Look {
 
 // DefaultSettings returns the default look and playback settings.
 func DefaultSettings() Settings {
-	return Settings{Look: DefaultLook(), Playback: Playback{Speed: 1, Volume: 1}}
+	return Settings{Look: DefaultLook(), Playback: Playback{Speed: 1, Volume: 1, Zoom: 1}}
 }
 
 // Kind is the value type of an Option.
@@ -266,6 +272,15 @@ var Options = []*Option{
 		ptr:    func(s *Settings) any { return &s.EdgeThreshold },
 		Active: func(s *Settings) bool { return s.Edges != "off" }},
 
+	{Key: "zoom", Label: "Picture size", Group: "Playback", Kind: KFloat, Min: 0.1, Max: 8, Step: 0.05,
+		Help: "size of the picture only, not of the interface (1 = fit the terminal)",
+		ptr:  func(s *Settings) any { return &s.Zoom }},
+	{Key: "pan-x", Label: "Pan X", Group: "Playback", Kind: KFloat, Min: -1, Max: 1, Step: 0.05,
+		Help: "which part of a cropped picture is shown, left to right",
+		ptr:  func(s *Settings) any { return &s.PanX }},
+	{Key: "pan-y", Label: "Pan Y", Group: "Playback", Kind: KFloat, Min: -1, Max: 1, Step: 0.05,
+		Help: "which part of a cropped picture is shown, top to bottom",
+		ptr:  func(s *Settings) any { return &s.PanY }},
 	{Key: "fps", Label: "FPS cap", Group: "Playback", Kind: KFloat, Min: 0, Max: 240, Step: 5,
 		Help: "frame rate to render at (0 = source rate)", ptr: func(s *Settings) any { return &s.FPS }},
 	{Key: "speed", Label: "Speed", Group: "Playback", Kind: KFloat, Min: 0.25, Max: 4, Step: 0.25,

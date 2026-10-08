@@ -49,12 +49,13 @@ func clicked(ev tty.Event) bool {
 
 // button draws a clickable label and returns its width.
 func (a *App) button(x, y int, label string, fg, bg uint32, fn func(ev tty.Event)) int {
-	w := len([]rune(label)) + 2
+	pad := 1 + a.pad()
+	w := len([]rune(label)) + 2*pad
 	if a.hover(x, y, w, 1) {
 		bg = cHot
 	}
 	a.scr.Fill(x, y, w, 1, tty.Cell{Ch: ' ', Bg: bg})
-	a.scr.Text(x+1, y, label, fg, bg, 0, -1)
+	a.scr.Text(x+pad, y, label, fg, bg, 0, -1)
 	a.on(x, y, w, 1, func(ev tty.Event, _, _ int) { fn(ev) })
 	return w
 }
@@ -112,7 +113,11 @@ func (a *App) draw() {
 	a.on(0, 0, s.W, s.H, a.videoMouse)
 	a.hudShown = a.hudVisible()
 	if a.hudShown && s.H >= 6 {
-		a.drawHUD()
+		if a.ui == 0 {
+			a.drawMiniHUD()
+		} else {
+			a.drawHUD()
+		}
 	}
 	if a.stats {
 		a.drawStats()
@@ -172,9 +177,15 @@ func (a *App) drawHUD() {
 	}
 	a.on(0, 0, W, 1, func(tty.Event, int, int) {})
 
-	// Seek bar.
+	// Seek bar. Large interface sizes put blank rows around it.
+	pad := a.pad()
+	top := H - 2 - pad
+	s.Fill(0, top, W, 2+pad, tty.Cell{Ch: ' ', Bg: cBar})
+	a.on(0, top, W, 2+pad, func(tty.Event, int, int) {})
 	y := H - 2
-	s.Fill(0, y, W, 2, tty.Cell{Ch: ' ', Bg: cBar})
+	if pad >= 2 {
+		y = H - 3
+	}
 	pos, dur := a.pos(), a.info.Duration
 	left := " " + fmtTime(pos) + " "
 	rightT := " " + fmtTime(dur) + " "
@@ -307,16 +318,17 @@ func (a *App) drawHUD() {
 		}},
 		{"?", cFg, func(ev tty.Event) {
 			if clicked(ev) {
-				a.help = !a.help
+				a.help, a.helpTop = !a.help, 0
 			}
 		}},
 	}
+	btnW := func(b btn) int { return len([]rune(b.label)) + 2 + 2*a.pad() }
 	total := 0
 	for _, b := range btns {
-		total += len([]rune(b.label)) + 2
+		total += btnW(b)
 	}
 	for len(btns) > 0 && x+total+1 > W {
-		total -= len([]rune(btns[0].label)) + 2
+		total -= btnW(btns[0])
 		btns = btns[1:]
 	}
 	rx := W - total - 1
@@ -349,36 +361,6 @@ func (a *App) drawStats() {
 	}
 }
 
-var helpText = [][2]string{
-	{"Space / k", "play / pause"},
-	{"← →   Shift+← →", "seek 5 s / 30 s"},
-	{", .", "previous / next frame"},
-	{"0-9   Home", "jump to 0-90 % / start"},
-	{"↑ ↓   m", "volume / mute"},
-	{"[ ]   l", "speed / loop"},
-	{"", ""},
-	{"r", "RANDOMIZE the whole look"},
-	{"R", "randomize palette only"},
-	{"u", "undo last change"},
-	{"Tab / s / F2", "settings menu"},
-	{"p P", "next / previous preset"},
-	{"Ctrl+S", "save look as preset"},
-	{"", ""},
-	{"v d c a", "cycle mode / dither / palette / charset"},
-	{"V D C A", "… backwards"},
-	{"- =", "fewer / more palette colors"},
-	{"f x y", "fit / flip X / flip Y"},
-	{"e i", "edges / invert"},
-	{"", ""},
-	{"h   g", "HUD auto·on·off / stats"},
-	{"o   n N", "open file / next · previous file"},
-	{"q  Ctrl+C", "quit"},
-	{"", ""},
-	{"Mouse", "click video = pause · right-click = menu"},
-	{"", "wheel = volume · drag bars and sliders"},
-	{"", "middle-click = randomize"},
-}
-
 func (a *App) window(title string, w, h int) (x, y int) {
 	s := a.scr
 	x, y = (s.W-w)/2, (s.H-h)/2
@@ -394,26 +376,57 @@ func (a *App) frame(title string, x, y, w, h int) {
 	s.Text(x+2, y, title, 0xffffff, cSel, engine.AttrBold, w-4)
 }
 
+// helpLines lists every binding of the active layers, grouped by layer.
+func (a *App) helpLines() [][2]string {
+	var out [][2]string
+	for _, l := range a.layers() {
+		out = append(out, [2]string{"", "── " + l.title + " ──"})
+		for _, b := range l.binds {
+			if b.desc != "" {
+				out = append(out, [2]string{prettyKeys(b.keys), b.desc})
+			}
+		}
+	}
+	return append(out,
+		[2]string{"", "── Mouse ──"},
+		[2]string{"click picture", "play / pause"},
+		[2]string{"right-click", "settings menu"},
+		[2]string{"middle-click", "randomize the look"},
+		[2]string{"wheel", "volume"},
+		[2]string{"Ctrl+wheel", "picture size"},
+		[2]string{"Alt+wheel", "interface size"},
+		[2]string{"drag", "seek bar, sliders, window title bars"})
+}
+
 func (a *App) drawHelp() {
-	w, h := 62, len(helpText)+3
-	if w > a.scr.W {
-		w = a.scr.W
-	}
-	if h > a.scr.H {
-		h = a.scr.H
-	}
-	x, y := a.window("Keys & mouse — press any key to close", w, h)
+	lines := a.helpLines()
+	w, h := a.dim(70, 30)
+	h = min(h, len(lines)+3)
+	x, y := a.window("Keys & mouse — ↑↓ scroll · any other key closes", w, h)
+	bodyH := h - 3
+	a.helpTop = max(0, min(a.helpTop, len(lines)-bodyH))
 	a.on(0, 0, a.scr.W, a.scr.H, func(ev tty.Event, _, _ int) {
-		if ev.Action == tty.MousePress {
+		switch ev.Action {
+		case tty.MousePress:
 			a.help = false
+		case tty.MouseWheelUp:
+			a.helpTop -= 3
+		case tty.MouseWheelDown:
+			a.helpTop += 3
 		}
 	})
-	for i, l := range helpText {
-		if i+2 >= h {
-			break
+	kw := 24 + 4*a.pad()
+	for i := 0; i < bodyH && a.helpTop+i < len(lines); i++ {
+		l := lines[a.helpTop+i]
+		if l[0] == "" {
+			a.scr.Text(x+2, y+2+i, l[1], cAccent, cPanel, engine.AttrBold, w-4)
+			continue
 		}
-		a.scr.Text(x+2, y+2+i, l[0], cYellow, cPanel, 0, 18)
-		a.scr.Text(x+21, y+2+i, l[1], cFg, cPanel, 0, w-23)
+		a.scr.Text(x+2, y+2+i, l[0], cYellow, cPanel, 0, kw-1)
+		a.scr.Text(x+2+kw, y+2+i, l[1], cFg, cPanel, 0, w-4-kw)
+	}
+	if a.helpTop+bodyH < len(lines) {
+		a.scr.Text(x+w-9, y+h-1, " more ↓ ", cDim, cPanel, 0, -1)
 	}
 }
 
@@ -436,7 +449,18 @@ func (a *App) handle(ev tty.Event) {
 	case a.prompt != nil:
 		a.prompt.key(a, ev)
 	case a.help:
-		a.help = false
+		switch ev.Key {
+		case tty.KeyUp:
+			a.helpTop--
+		case tty.KeyDown:
+			a.helpTop++
+		case tty.KeyPgUp:
+			a.helpTop -= 10
+		case tty.KeyPgDn:
+			a.helpTop += 10
+		default:
+			a.help = false
+		}
 	case a.browser != nil:
 		a.browser.key(a, ev)
 	case a.menu != nil && a.menu.key(a, ev):
@@ -495,10 +519,19 @@ func (a *App) videoMouse(ev tty.Event, _, _ int) {
 		case tty.ButtonMiddle:
 			a.randomize(false)
 		}
-	case tty.MouseWheelUp:
-		a.nudge("volume", 1)
-	case tty.MouseWheelDown:
-		a.nudge("volume", -1)
+	case tty.MouseWheelUp, tty.MouseWheelDown:
+		d := 1
+		if ev.Action == tty.MouseWheelDown {
+			d = -1
+		}
+		switch {
+		case ev.Ctrl:
+			a.zoom(d)
+		case ev.Alt:
+			a.setUI(a.ui + d)
+		default:
+			a.nudge("volume", d)
+		}
 	}
 }
 
@@ -512,132 +545,6 @@ func (a *App) toggleMenu(tab int) {
 	}
 	if tab >= 0 {
 		a.menu.tab = tab
-	}
-}
-
-func (a *App) playerKey(ev tty.Event) {
-	switch ev.Key {
-	case tty.KeyLeft, tty.KeyRight:
-		d := 5.0
-		if ev.Shift || ev.Ctrl {
-			d = 30
-		}
-		if ev.Key == tty.KeyLeft {
-			d = -d
-		}
-		a.seekBy(d)
-	case tty.KeyUp:
-		a.nudge("volume", 1)
-	case tty.KeyDown:
-		a.nudge("volume", -1)
-	case tty.KeyHome:
-		a.seek(0)
-	case tty.KeyTab, tty.KeyF2:
-		a.toggleMenu(-1)
-	case tty.KeyF1:
-		a.help = true
-	case tty.KeyCtrlS:
-		a.savePresetPrompt()
-	case tty.KeyEsc:
-		if a.menu != nil {
-			a.menu = nil
-		}
-	case tty.KeyRune:
-		a.playerRune(ev.Rune)
-	}
-}
-
-func (a *App) playerRune(r rune) {
-	switch r {
-	case ' ', 'k':
-		a.setPlaying(!a.isPlaying())
-	case 'q', 'Q':
-		a.quit = true
-	case 'r':
-		a.randomize(false)
-	case 'R':
-		a.randomize(true)
-	case 'u', 'U':
-		a.undo()
-	case 's', 'S':
-		a.toggleMenu(-1)
-	case 'p':
-		a.cyclePreset(1)
-	case 'P':
-		a.cyclePreset(-1)
-	case 'v':
-		a.nudge("mode", 1)
-	case 'V':
-		a.nudge("mode", -1)
-	case 'd':
-		a.nudge("dither", 1)
-	case 'D':
-		a.nudge("dither", -1)
-	case 'c':
-		a.nudge("palette", 1)
-	case 'C':
-		a.nudge("palette", -1)
-	case 'a':
-		a.nudge("charset", 1)
-	case 'A':
-		a.nudge("charset", -1)
-	case '=', '+':
-		a.nudge("colors", 1)
-	case '-', '_':
-		a.nudge("colors", -1)
-	case 'f':
-		a.nudge("fit", 1)
-	case 'x':
-		a.nudge("flip-x", 1)
-	case 'y':
-		a.nudge("flip-y", 1)
-	case 'e':
-		a.nudge("edges", 1)
-	case 'i':
-		a.nudge("invert", 1)
-	case 'm':
-		a.nudge("mute", 1)
-	case 'l':
-		a.nudge("loop", 1)
-	case ']':
-		a.nudge("speed", 1)
-	case '[':
-		a.nudge("speed", -1)
-	case 'h':
-		a.hud = map[string]string{"auto": "on", "on": "off", "off": "auto"}[a.hud]
-		a.say("HUD: "+a.hud, time.Second)
-	case 'g':
-		a.stats = !a.stats
-	case '?':
-		a.help = true
-	case 'o':
-		a.openBrowser()
-	case 'n':
-		if len(a.files) > 1 {
-			a.open(a.fileIdx+1, 0)
-		}
-	case 'N':
-		if len(a.files) > 1 {
-			a.open(a.fileIdx-1, 0)
-		}
-	case '.':
-		if a.loaded && !a.info.Still {
-			if a.isPlaying() {
-				a.setPlaying(false)
-			}
-			a.needFrame = true
-		}
-	case ',':
-		if a.loaded {
-			if a.isPlaying() {
-				a.setPlaying(false)
-			}
-			a.seek(a.pos() - 1/a.fps())
-		}
-	default:
-		if r >= '0' && r <= '9' && a.info.Duration > 0 {
-			a.seek(a.info.Duration * float64(r-'0') / 10)
-		}
 	}
 }
 
@@ -665,4 +572,42 @@ func (a *App) savePreset(name string, askOverwrite bool) {
 	}
 	a.preset = name
 	a.say("saved preset: "+name, 1500*time.Millisecond)
+}
+
+// drawMiniHUD is the compact interface size: one line at the bottom.
+func (a *App) drawMiniHUD() {
+	s := a.scr
+	W, y := s.W, s.H-1
+	s.Fill(0, y, W, 1, tty.Cell{Ch: ' ', Bg: cBar})
+	a.on(0, y, W, 1, func(tty.Event, int, int) {})
+	play := "▶"
+	if a.isPlaying() {
+		play = "▮▮"
+	}
+	x := a.button(0, y, play, cGreen, cBar, func(ev tty.Event) {
+		if clicked(ev) {
+			a.setPlaying(!a.isPlaying())
+		}
+	})
+	pos, dur := a.pos(), a.info.Duration
+	x += s.Text(x, y, fmtTime(pos)+" ", cFg, cBar, 0, -1)
+	right := " " + fmtTime(dur) + " ☰ "
+	bw := W - x - len([]rune(right))
+	frac := 0.0
+	if dur > 0 {
+		frac = min(1, pos/dur)
+	}
+	a.slider(x, y, bw, frac, cAccent, cBar)
+	bx := x
+	a.on(bx, y, bw, 1, func(ev tty.Event, rx, _ int) {
+		if (ev.Action == tty.MousePress || ev.Action == tty.MouseDrag) && ev.Button == tty.ButtonLeft && dur > 0 {
+			a.seek(sliderFrac(rx, bw) * dur)
+		}
+	})
+	s.Text(x+bw, y, right, cDim, cBar, 0, -1)
+	a.on(W-3, y, 3, 1, func(ev tty.Event, _, _ int) {
+		if clicked(ev) {
+			a.toggleMenu(-1)
+		}
+	})
 }

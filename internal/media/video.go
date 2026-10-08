@@ -27,6 +27,7 @@ type VideoOpts struct {
 	W, H         int      // output size in pixels
 	FPS          float64  // output frame rate
 	CropX, CropY float64  // fraction of the source to keep (1 = all)
+	PanX, PanY   float64  // -1..1: where the kept part sits (0 = centre)
 	Loop         bool     // loop the input seamlessly
 	Still        bool     // single picture
 	HWAccel      bool
@@ -81,7 +82,9 @@ func StartVideo(o VideoOpts) (*Video, error) {
 		if cy <= 0 || cy > 1 {
 			cy = 1
 		}
-		vf = append(vf, fmt.Sprintf("crop=iw*%s:ih*%s", ftoa(cx), ftoa(cy)))
+		px := min(1, max(0, (1+o.PanX)/2))
+		py := min(1, max(0, (1+o.PanY)/2))
+		vf = append(vf, fmt.Sprintf("crop=iw*%s:ih*%s:(iw-ow)*%s:(ih-oh)*%s", ftoa(cx), ftoa(cy), ftoa(px), ftoa(py)))
 	}
 	vf = append(vf, fmt.Sprintf("scale=%d:%d:flags=area", o.W, o.H), "setsar=1")
 	args = append(args, "-vf", strings.Join(vf, ","))

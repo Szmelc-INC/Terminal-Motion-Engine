@@ -23,7 +23,7 @@ type Prompt struct {
 
 func (p *Prompt) draw(a *App) {
 	s := a.scr
-	w := min(56, s.W)
+	w, _ := a.dim(56, 6)
 	x, y := a.window(p.title, w, 6)
 	a.on(0, 0, s.W, s.H, func(tty.Event, int, int) {})
 	if p.hint != "" {
@@ -255,7 +255,7 @@ func (b *Browser) activate(a *App) {
 
 func (b *Browser) draw(a *App) {
 	s := a.scr
-	w, h := min(72, s.W), min(24, s.H)
+	w, h := a.dim(72, 24)
 	x, y := a.window("Open — "+tty.Clean(b.dir), w, h)
 	a.on(0, 0, s.W, s.H, func(tty.Event, int, int) {})
 	listH := h - 3

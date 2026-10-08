@@ -43,6 +43,7 @@ var extras = map[string]extra{
 	"audio-sink": {true, "shell command that plays raw s16le 48 kHz stereo PCM from stdin"},
 	"hwaccel":    {false, "let ffmpeg use hardware decoding"},
 	"hud":        {true, "HUD visibility: auto, on, off"},
+	"ui":         {true, "interface size: compact, normal, large, huge"},
 	"stats":      {false, "show the performance overlay"},
 	"depth":      {true, "terminal color depth: 24, 8 or 4 (default: auto-detect)"},
 	"start":      {true, "start position in seconds"},
@@ -298,9 +299,16 @@ func cmdPlay(c *cli, store *app.Store) error {
 			return fmt.Errorf("cannot open %s: no such file or folder", f)
 		}
 	}
+	ui := 1
+	if v, ok := c.get("ui"); ok {
+		if ui = app.UIScale(v); ui < 0 {
+			return fmt.Errorf("--ui: %q is not one of compact, normal, large, huge", v)
+		}
+	}
 	sink, _ := c.get("audio-sink")
 	return app.Run(app.Config{
-		Files: c.args, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
+		UIScale: ui,
+		Files:   c.args, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
 		HWAccel: c.has("hwaccel"), HUD: hud, Depth: depth, Start: start, Stats: c.has("stats"),
 		Store: store, Preset: preset,
 	})
