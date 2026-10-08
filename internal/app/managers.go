@@ -956,3 +956,111 @@ func prefFields(a *App) []field {
 		}),
 	}
 }
+
+// --- sound presets -----------------------------------------------------------
+
+func (a *App) setSound(sp engine.SoundPreset) {
+	a.s.Sound, a.soundName = sp.Sound, sp.Name
+	a.changed()
+	a.say("sound: "+sp.Name+" — "+engine.SoundSummary(sp.Sound), 2*time.Second)
+}
+
+// randomSound rolls a few audio effects at random.
+func (a *App) randomSound() {
+	a.s.Sound, a.soundName = engine.RandomSound(a.rng), ""
+	a.changed()
+	a.say("random sound → "+engine.SoundSummary(a.s.Sound), 2500*time.Millisecond)
+}
+
+func (a *App) cycleSound(dir int) {
+	all := a.lib.AllSounds()
+	idx := -1
+	for i, s := range all {
+		if s.Name == a.soundName {
+			idx = i
+		}
+	}
+	if idx < 0 && dir < 0 {
+		idx = 0
+	}
+	a.setSound(all[((idx+dir)%len(all)+len(all))%len(all)])
+}
+
+func (a *App) saveSoundAs(s engine.Sound, suggest string) {
+	a.ask("Save the sound as", "name", suggest, func(v string) {
+		for _, b := range engine.BuiltinSounds {
+			if strings.EqualFold(b.Name, v) {
+				a.say(v+" is a built-in sound, pick another name", 3*time.Second)
+				return
+			}
+		}
+		if a.fail(a.lib.SaveSound(v, s)) {
+			return
+		}
+		a.soundName = v
+		pgSounds.selectName(a, v)
+		a.ok("saved sound " + v)
+	})
+}
+
+func newSoundManager() *managerPage {
+	p := &managerPage{name: "Sounds"}
+	p.items = func(a *App) []mItem {
+		var out []mItem
+		for _, s := range a.lib.AllSounds() {
+			out = append(out, mItem{name: s.Name, user: !s.Builtin, info: engine.SoundSummary(s.Sound), active: s.Name == a.soundName})
+		}
+		return out
+	}
+	find := func(a *App, it mItem) engine.SoundPreset { s, _ := a.lib.FindSound(it.name); return s }
+	p.actions = []mAction{
+		{'l', "Use", &cGreen, func(a *App, it mItem, ok bool) {
+			if ok {
+				a.setSound(find(a, it))
+			}
+		}},
+		{'n', "New", &cAccent, func(a *App, it mItem, ok bool) { a.saveSoundAs(a.s.Sound, "") }},
+		{'g', "⚄ Random", &cYellow, func(a *App, it mItem, ok bool) { a.randomSound() }},
+		{'s', "Save over", nil, func(a *App, it mItem, ok bool) {
+			if a.userOnly(it, ok, "save") {
+				a.confirm = &Confirm{msg: fmt.Sprintf("Overwrite %q with the current sound?", it.name), yes: func() {
+					if !a.fail(a.lib.SaveSound(it.name, a.s.Sound)) {
+						a.soundName = it.name
+						a.ok("saved " + it.name)
+					}
+				}}
+			}
+		}},
+		{'c', "Copy", nil, func(a *App, it mItem, ok bool) {
+			if ok {
+				a.saveSoundAs(find(a, it).Sound, it.name+"-copy")
+			}
+		}},
+		{'r', "Rename", nil, func(a *App, it mItem, ok bool) {
+			if !a.userOnly(it, ok, "make") {
+				return
+			}
+			a.ask("Rename sound", "new name", it.name, func(v string) {
+				if a.fail(a.lib.Rename("sound", it.name, v)) {
+					return
+				}
+				if a.soundName == it.name {
+					a.soundName = v
+				}
+				a.ok("renamed to " + v)
+			})
+		}},
+		{'d', "Delete", &cRed, func(a *App, it mItem, ok bool) {
+			if !a.userOnly(it, ok, "make") {
+				return
+			}
+			a.confirm = &Confirm{msg: fmt.Sprintf("Delete sound %q?", it.name), yes: func() {
+				if !a.fail(a.lib.Delete("sound", it.name)) {
+					a.ok("deleted " + it.name)
+				}
+			}}
+		}},
+		{'0', "Clean", nil, func(a *App, it mItem, ok bool) { a.setSound(engine.BuiltinSounds[0]) }},
+	}
+	return p
+}

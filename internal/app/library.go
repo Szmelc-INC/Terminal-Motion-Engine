@@ -31,6 +31,68 @@ type Library struct {
 	Palettes []PaletteEntry `json:"palettes"`
 	Charsets []CharsetEntry `json:"charsets"`
 	Themes   []Theme        `json:"themes"`
+	Sounds   []SoundEntry   `json:"sounds"`
+}
+
+// SoundEntry is a user sound preset.
+type SoundEntry struct {
+	Name  string       `json:"name"`
+	Sound engine.Sound `json:"sound"`
+}
+
+// UnmarshalJSON decodes over the defaults, so a preset written by an older
+// version gets sane values for the settings added since.
+func (e *SoundEntry) UnmarshalJSON(b []byte) error {
+	type plain SoundEntry
+	p := plain{Sound: engine.DefaultSound()}
+	err := json.Unmarshal(b, &p)
+	*e = SoundEntry(p)
+	return err
+}
+
+// AllSounds lists user sound presets first, then the built-in ones they do
+// not shadow.
+func (l *Library) AllSounds() []engine.SoundPreset {
+	var out []engine.SoundPreset
+	for _, s := range l.Sounds {
+		out = append(out, engine.SoundPreset{Name: s.Name, Sound: s.Sound})
+	}
+	for _, b := range engine.BuiltinSounds {
+		dup := false
+		for _, u := range l.Sounds {
+			dup = dup || strings.EqualFold(u.Name, b.Name)
+		}
+		if !dup {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// FindSound looks a sound preset up by name.
+func (l *Library) FindSound(name string) (engine.SoundPreset, bool) {
+	for _, s := range l.AllSounds() {
+		if strings.EqualFold(s.Name, name) {
+			return s, true
+		}
+	}
+	return engine.SoundPreset{}, false
+}
+
+// SaveSound creates or replaces a user sound preset.
+func (l *Library) SaveSound(name string, s engine.Sound) error {
+	name, err := cleanName(name)
+	if err != nil {
+		return err
+	}
+	for i := range l.Sounds {
+		if strings.EqualFold(l.Sounds[i].Name, name) {
+			l.Sounds[i].Sound = s
+			return l.save()
+		}
+	}
+	l.Sounds = append(l.Sounds, SoundEntry{Name: name, Sound: s})
+	return l.save()
 }
 
 func writeJSON(path string, v any, mode os.FileMode) error {
@@ -212,6 +274,13 @@ func (l *Library) Delete(kind, name string) error {
 				break
 			}
 		}
+	case "sound":
+		for i, p := range l.Sounds {
+			if strings.EqualFold(p.Name, name) {
+				l.Sounds, found = append(l.Sounds[:i], l.Sounds[i+1:]...), true
+				break
+			}
+		}
 	}
 	if !found {
 		return fmt.Errorf("no user %s named %q (built-in ones cannot be deleted)", kind, name)
@@ -246,6 +315,10 @@ func (l *Library) Rename(kind, old, name string) error {
 	case "theme":
 		for i := range l.Themes {
 			check(&l.Themes[i].Name)
+		}
+	case "sound":
+		for i := range l.Sounds {
+			check(&l.Sounds[i].Name)
 		}
 	}
 	if target == nil {

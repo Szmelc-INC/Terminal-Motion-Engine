@@ -276,6 +276,20 @@ func (a *App) drawHUD() {
 		})
 		x += vw + 1
 		x += s.Text(x, y, fmt.Sprintf("%3.0f%%", a.s.Volume*100), cDim, cBar, 0, -1) + 1
+		if W >= 110 && a.s.Sound.SoundActive() {
+			label := "♪ " + engine.SoundSummary(a.s.Sound)
+			if a.soundName != "" {
+				label = "♪ " + a.soundName
+			}
+			if r := []rune(label); len(r) > 26 {
+				label = string(r[:25]) + "…"
+			}
+			x += a.button(x, y, label, cYellow, cBar, func(ev tty.Event) {
+				if clicked(ev) {
+					a.openPanel("presets", 1)
+				}
+			})
+		}
 	}
 
 	// Right-aligned buttons; dropped from the left when space runs out.

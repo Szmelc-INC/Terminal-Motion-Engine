@@ -177,22 +177,30 @@ func (m *Menu) key(a *App, ev tty.Event) bool {
 // The pages and panels are wired up in init: they refer to each other
 // through the actions they run.
 var (
-	pgPresets, pgPalettes, pgCharsets, pgThemes *managerPage
-	pgEditor                                    = &paletteEditPage{}
-	pgPrefs                                     *fieldsPage
-	panels                                      []*panel
+	pgPresets, pgPalettes, pgCharsets, pgThemes, pgSounds *managerPage
+	pgEditor                                              = &paletteEditPage{}
+	pgPrefs                                               *fieldsPage
+	panels                                                []*panel
 )
 
 func init() {
 	pgPresets, pgPalettes = newPresetManager(), newPaletteManager()
 	pgCharsets, pgThemes = newCharsetManager(), newThemeManager()
+	pgSounds = newSoundManager()
+	audio := func(group string) page { return &optionsPage{group: "Audio: " + group, name: group} }
 	pgPrefs = &fieldsPage{name: "Preferences", fields: prefFields}
 	panels = []*panel{
 		{id: "picture", title: "Picture", pages: []page{
 			&optionsPage{group: "Render"}, &optionsPage{group: "Color"}, &optionsPage{group: "Dither"},
 			&optionsPage{group: "Adjust"}, &optionsPage{group: "Playback"},
 		}},
-		{id: "presets", title: "Presets", pages: []page{pgPresets}},
+		{id: "sound", title: "Sound — tone, dynamics, space", pages: []page{
+			audio("Tone"), audio("EQ"), audio("Dynamics"), audio("Space"),
+		}},
+		{id: "soundfx", title: "Sound effects — motion, lo-fi, synth", pages: []page{
+			audio("Motion"), audio("Lo-fi"), audio("Synth"),
+		}},
+		{id: "presets", title: "Presets", pages: []page{pgPresets, pgSounds}},
 		{id: "palettes", title: "Palettes & symbols", pages: []page{pgPalettes, pgEditor, pgCharsets}},
 		{id: "prefs", title: "Preferences & themes", pages: []page{pgPrefs, pgThemes}},
 	}

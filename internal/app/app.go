@@ -39,6 +39,7 @@ type Config struct {
 	Find      string   // open the media finder with this search
 	FindSite  string   // name of the site to search first
 	Streams   []Stream // what is known about web links among Files
+	Sound     string   // name of the sound preset the audio settings came from
 }
 
 // Stream describes a playlist entry that plays from the web.
@@ -121,6 +122,10 @@ type App struct {
 	lastClickY   int
 	dbl          bool
 
+	chain     string    // ffmpeg audio filter chain the decoder runs with
+	chainDue  time.Time // when to restart the decoder with a new chain
+	soundName string    // sound preset the audio settings came from
+
 	// async carries results of background work (searches, downloads…) back
 	// to the main loop, which owns every other field.
 	async chan func()
@@ -171,7 +176,7 @@ func Run(cfg Config) (err error) {
 		cfg: cfg, term: t, store: cfg.Store, s: cfg.Settings, files: cfg.Files,
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())), hud: cfg.HUD, stats: cfg.Stats,
 		preset: cfg.Preset, speed: cfg.Settings.Speed, lastActivity: time.Now(), mx: -1, my: -1,
-		async: make(chan func(), 64), ui: cfg.UIScale, lib: cfg.Lib, prefs: cfg.Prefs,
+		async: make(chan func(), 64), ui: cfg.UIScale, lib: cfg.Lib, prefs: cfg.Prefs, soundName: cfg.Sound,
 	}
 	if a.lib == nil {
 		a.lib = &Library{Path: filepath.Join(filepath.Dir(a.store.Path), "library.json")}
@@ -399,7 +404,9 @@ func (a *App) startAudio(pos float64) {
 		return
 	}
 	a.applyVolume()
-	a.aud.Play(a.info.AudioSrc(), pos, a.s.Speed, a.s.Loop)
+	a.chain = a.s.Sound.Chain(media.HasFilter("rubberband"))
+	a.chainDue = time.Time{}
+	a.aud.Play(a.info.AudioSrc(), pos, a.s.Speed, a.s.Loop, a.chain)
 }
 
 func (a *App) applyVolume() {
@@ -412,6 +419,12 @@ func (a *App) applyVolume() {
 	}
 	a.aud.SetVolume(v)
 	a.aud.SetDelay(a.s.AudioDelay)
+	if a.s.Sound.Params.Active() {
+		fx := a.s.Sound.Params
+		a.aud.SetFX(&fx)
+	} else {
+		a.aud.SetFX(nil)
+	}
 }
 
 func (a *App) fps() float64 {
@@ -544,6 +557,13 @@ func (a *App) tick() {
 	if a.finder != nil {
 		a.finder.tick(a)
 	}
+	if !a.chainDue.IsZero() && now.After(a.chainDue) {
+		a.chainDue = time.Time{}
+		if a.s.Sound.Chain(media.HasFilter("rubberband")) != a.chain {
+			p, _ := a.clock()
+			a.startAudio(a.wrap(p))
+		}
+	}
 	if a.hudVisible() != a.hudShown {
 		a.dirty = true
 	}
@@ -649,6 +669,12 @@ func (a *App) changed() {
 	}
 	a.applyVolume()
 	a.applied = pb
+	// The ffmpeg part of the sound settings needs the decoder restarted.
+	// Wait until the slider has rested, or every step would be a gap.
+	if a.aud != nil && a.loaded && a.info.HasAudio && a.chainDue.IsZero() &&
+		a.s.Sound.Chain(media.HasFilter("rubberband")) != a.chain {
+		a.chainDue = time.Now().Add(160 * time.Millisecond)
+	}
 	a.ensureVideo()
 	a.renderLast()
 	a.dirty = true
@@ -691,6 +717,9 @@ func (a *App) nextWake() time.Duration {
 	}
 	if a.finder != nil {
 		near(a.finder.wake())
+	}
+	if !a.chainDue.IsZero() {
+		near(time.Until(a.chainDue) + time.Millisecond)
 	}
 	if d < 0 {
 		d = 0

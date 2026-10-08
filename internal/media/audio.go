@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/dsp"
 )
 
 const (
@@ -41,6 +43,7 @@ type Audio struct {
 	gen     atomic.Int64
 	volume  atomic.Uint64 // float64 bits
 	delay   atomic.Int64  // microseconds
+	fx      atomic.Pointer[dsp.Params]
 	failed  atomic.Bool
 	closing atomic.Bool
 }
@@ -120,6 +123,30 @@ func (a *Audio) Failed() bool { return a.failed.Load() }
 // SetVolume sets the gain (1 = unchanged, 0 = silent).
 func (a *Audio) SetVolume(v float64) { a.volume.Store(math.Float64bits(v)) }
 
+// SetFX sets the effects of termo's own processor. They apply to the very
+// next chunk of sound; nil turns them off.
+func (a *Audio) SetFX(p *dsp.Params) { a.fx.Store(p) }
+
+var (
+	filterOnce sync.Once
+	filterList string
+)
+
+// HasFilter reports whether the installed ffmpeg has an audio or video
+// filter of that name.
+func HasFilter(name string) bool {
+	filterOnce.Do(func() {
+		out, _ := exec.Command("ffmpeg", "-hide_banner", "-filters").Output()
+		filterList = string(out)
+	})
+	for _, line := range strings.Split(filterList, "\n") {
+		if f := strings.Fields(line); len(f) >= 2 && f[1] == name {
+			return true
+		}
+	}
+	return false
+}
+
 // SetDelay shifts sound later (positive) or earlier (negative), in seconds.
 func (a *Audio) SetDelay(sec float64) { a.delay.Store(int64(sec * 1e6)) }
 
@@ -139,8 +166,9 @@ func atempo(speed float64) string {
 }
 
 // Play (re)starts audio decoding at the given media position. Any previous
-// stream is dropped.
-func (a *Audio) Play(path string, start, speed float64, loop bool) {
+// stream is dropped. chain is an ffmpeg audio filter chain to run the sound
+// through, or "".
+func (a *Audio) Play(path string, start, speed float64, loop bool, chain string) {
 	a.Stop()
 	if a.failed.Load() {
 		return
@@ -155,8 +183,15 @@ func (a *Audio) Play(path string, start, speed float64, loop bool) {
 	}
 	args = append(args, netArgs(path)...)
 	args = append(args, "-i", path, "-map", "0:a:0", "-vn", "-sn", "-dn")
+	var af []string
 	if math.Abs(speed-1) > 0.001 {
-		args = append(args, "-af", atempo(speed))
+		af = append(af, atempo(speed))
+	}
+	if chain != "" {
+		af = append(af, chain)
+	}
+	if len(af) > 0 {
+		args = append(args, "-af", strings.Join(af, ","))
 	}
 	args = append(args, "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1")
 	cmd := exec.Command("ffmpeg", args...)
@@ -176,6 +211,7 @@ func (a *Audio) Play(path string, start, speed float64, loop bool) {
 func (a *Audio) feed(cmd *exec.Cmd, r io.Reader, gen int64, start, speed float64) {
 	defer cmd.Wait()
 	buf := make([]byte, chunkBytes)
+	proc := dsp.NewProcessor()
 	var read int64
 	for a.gen.Load() == gen {
 		if _, err := io.ReadFull(r, buf); err != nil {
@@ -204,6 +240,9 @@ func (a *Audio) feed(cmd *exec.Cmd, r io.Reader, gen int64, start, speed float64
 			break
 		}
 		if len(buf) > 0 {
+			if fx := a.fx.Load(); fx != nil {
+				proc.Process(buf, fx)
+			}
 			if v := math.Float64frombits(a.volume.Load()); v != 1 {
 				g := int32(v * 256)
 				for i := 0; i+1 < len(buf); i += 2 {

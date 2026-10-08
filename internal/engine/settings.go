@@ -67,6 +67,7 @@ type Playback struct {
 type Settings struct {
 	Look
 	Playback
+	Sound Sound
 }
 
 // Render modes.
@@ -153,7 +154,7 @@ func DefaultLook() Look {
 
 // DefaultSettings returns the default look and playback settings.
 func DefaultSettings() Settings {
-	return Settings{Look: DefaultLook(), Playback: Playback{Speed: 1, Volume: 1, Zoom: 1}}
+	return Settings{Look: DefaultLook(), Playback: Playback{Speed: 1, Volume: 1, Zoom: 1}, Sound: DefaultSound()}
 }
 
 // Kind is the value type of an Option.

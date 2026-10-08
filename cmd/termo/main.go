@@ -54,6 +54,7 @@ var extras = map[string]extra{
 	"all":        {false, "bench: measure every mode and dither"},
 	"presets":    {true, "path to the preset file"},
 	"sort":       {false, "charsets add: order the characters from empty to full"},
+	"sound":      {true, "start with a sound preset (termo sounds lists them)"},
 	"site":       {true, "find/search/get: youtube, giphy, tenor, pinterest, archive, wikimedia, url"},
 	"kind":       {true, "search filter: any, video, gif, image"},
 	"length":     {true, "search filter: any, short, medium, long"},
@@ -70,6 +71,9 @@ var shorts = map[string]string{
 	"m": "mode", "p": "palette", "d": "dither", "c": "colors", "P": "preset",
 	"f": "fps", "r": "random", "h": "help", "v": "version", "s": "start",
 }
+
+// library is the user's library, loaded once in run.
+var library *app.Library
 
 type flagVal struct{ key, val string }
 
@@ -174,6 +178,13 @@ func (c *cli) settings(store *app.Store) (engine.Settings, string, error) {
 		engine.Randomize(&s.Look, rand.New(rand.NewSource(seed)))
 		preset = ""
 	}
+	if name, ok := c.get("sound"); ok && library != nil {
+		sp, found := library.FindSound(name)
+		if !found {
+			return s, "", fmt.Errorf("no sound named %q (termo sounds lists them)", name)
+		}
+		s.Sound = sp.Sound
+	}
 	for _, f := range c.flags {
 		if o := engine.FindOption(f.key); o != nil {
 			if err := o.Set(&s, f.val); err != nil {
@@ -259,11 +270,12 @@ func run(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot load the library: %v", err)
 	}
+	library = lib
 	cmd := ""
 	if len(c.args) > 0 {
 		switch c.args[0] {
 		case "play", "snap", "bench", "info", "presets", "palettes", "charsets", "themes", "options",
-			"find", "search", "get":
+			"find", "search", "get", "sounds":
 			// A file that happens to share a command's name still plays.
 			if _, err := os.Stat(c.args[0]); err != nil || c.args[0] == "play" {
 				cmd, c.args = c.args[0], c.args[1:]
@@ -279,6 +291,15 @@ func run(argv []string) error {
 		return cmdCharsets(c, lib)
 	case "themes":
 		return cmdThemes(c, lib)
+	case "sounds":
+		for _, s := range lib.AllSounds() {
+			tag := "user"
+			if s.Builtin {
+				tag = "built-in"
+			}
+			fmt.Printf("  %-16s %-9s %s\n", s.Name, tag, engine.SoundSummary(s.Sound))
+		}
+		return nil
 	case "search", "get":
 		prefs, err := app.LoadPrefs(filepath.Dir(store.Path))
 		if err != nil {
@@ -365,8 +386,9 @@ func cmdPlay(c *cli, store *app.Store, lib *app.Library, find bool) error {
 		}
 	}
 	sink, _ := c.get("audio-sink")
+	soundName, _ := c.get("sound")
 	return app.Run(app.Config{
-		UIScale: ui, Lib: lib, Prefs: prefs, Find: findQuery, FindSite: findSite, Streams: streams,
+		Sound: soundName, UIScale: ui, Lib: lib, Prefs: prefs, Find: findQuery, FindSite: findSite, Streams: streams,
 		Files: files, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
 		HWAccel: c.has("hwaccel"), HUD: hud, Depth: depth, Start: start, Stats: c.has("stats") || prefs.Stats,
 		Store: store, Preset: preset,
@@ -845,6 +867,7 @@ Usage:
   termo palettes [add|import|rm|export]   list palettes, or manage your own
   termo charsets [add|gen|rm]       list ASCII ramps, or manage your own
   termo themes                      list interface themes
+  termo sounds                      list sound presets (--sound NAME starts with one)
   termo options                     list every look option with its values
 
 Common options (termo options lists all of them):

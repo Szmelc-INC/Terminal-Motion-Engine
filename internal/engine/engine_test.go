@@ -334,8 +334,15 @@ func TestOptions(t *testing.T) {
 		seen[o.Key] = true
 		before := o.String(&s)
 		if o.Kind != KText && o.Kind != KList {
-			o.Nudge(&s, 1)
-			o.Nudge(&s, -1)
+			// Step away and back. A value that starts at the top of its
+			// range (a filter that is off at 20 kHz, a mix at 100 %) can
+			// only step down first.
+			dir := 1
+			if (o.Kind == KFloat || o.Kind == KInt) && !o.Wrap && o.Frac(&s) >= 1 {
+				dir = -1
+			}
+			o.Nudge(&s, dir)
+			o.Nudge(&s, -dir)
 			if o.Kind != KBool && o.String(&s) != before {
 				t.Errorf("%s: nudge +1/-1 changed %q to %q", o.Key, before, o.String(&s))
 			}
@@ -386,7 +393,8 @@ func TestRandomizeAlwaysValid(t *testing.T) {
 		if l.Fit != "fill" || !l.FlipX {
 			t.Fatal("randomize must not touch geometry")
 		}
-		s := Settings{Look: l}
+		s := DefaultSettings()
+		s.Look = l
 		for _, o := range Options {
 			if o.Group == "Playback" || o.Kind == KText || o.Kind == KList {
 				continue
