@@ -908,6 +908,7 @@ func (a *App) savePrefs() {
 		return
 	}
 	a.prefs.UI, a.prefs.HUD, a.prefs.Stats = uiNames[max(0, min(len(uiNames)-1, a.ui))], a.hud, a.stats
+	a.prefs.Mode = modes[a.mode].name
 	if err := a.prefs.Save(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		a.say("could not save preferences: "+err.Error(), 4*time.Second)
 	}
@@ -939,6 +940,22 @@ func prefFields(a *App) []field {
 			}},
 		{label: "HUD", kind: fEnum, help: "auto hides the bars while playing", str: func() string { return a.hud },
 			nudge: func(d int) { a.hud = cycle([]string{"auto", "on", "off"}, a.hud, d); a.savePrefs() }},
+		{label: "Key hints", kind: fBool, help: "the keys of the active bind mode on a line above the seek bar",
+			str: func() string {
+				if p.Hints {
+					return "on"
+				}
+				return "off"
+			},
+			nudge: func(int) { p.Hints = !p.Hints; a.savePrefs() }},
+		{label: "Start with keys", kind: fEnum, help: "the bind mode termo starts in; last = the one it was closed in",
+			str: func() string {
+				if p.Keys == "" {
+					return "play"
+				}
+				return p.Keys
+			},
+			nudge: func(d int) { p.Keys = cycle(append(ModeNames(), "last"), p.Keys, d); a.savePrefs() }},
 		{label: "Statistics", kind: fBool, help: "frame rate and render time overlay",
 			str: func() string {
 				if a.stats {
@@ -965,6 +982,7 @@ func prefFields(a *App) []field {
 // --- sound presets -----------------------------------------------------------
 
 func (a *App) setSound(sp engine.SoundPreset) {
+	a.touch()
 	a.s.Sound, a.soundName = sp.Sound, sp.Name
 	a.changed()
 	a.say("sound: "+sp.Name+" — "+engine.SoundSummary(sp.Sound), 2*time.Second)
@@ -972,9 +990,10 @@ func (a *App) setSound(sp engine.SoundPreset) {
 
 // randomSound rolls a few audio effects at random.
 func (a *App) randomSound() {
+	a.touch()
 	a.s.Sound, a.soundName = engine.RandomSound(a.rng), ""
 	a.changed()
-	a.say("random sound → "+engine.SoundSummary(a.s.Sound), 2500*time.Millisecond)
+	a.say("random sound → "+engine.SoundSummary(a.s.Sound)+"   (u = undo)", 2500*time.Millisecond)
 }
 
 func (a *App) cycleSound(dir int) {

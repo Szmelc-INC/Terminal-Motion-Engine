@@ -444,12 +444,31 @@ type Prefs struct {
 	DownloadDir string `json:"download_dir"`
 	YouTubeKey  string `json:"youtube_api_key"`
 	GiphyKey    string `json:"giphy_api_key"`
+
+	// Hints shows the keys of the active bind mode above the seek bar.
+	Hints bool `json:"key_hints"`
+	// Keys is the bind mode to start in: a mode name, or "last" for the one
+	// that was active when termo was closed, which Mode remembers.
+	Keys string `json:"keys"`
+	Mode string `json:"last_keys,omitempty"`
+}
+
+// startMode is the name of the bind mode to start in.
+func (p *Prefs) startMode() string {
+	if p.Keys == "last" {
+		return p.Mode
+	}
+	return p.Keys
 }
 
 // LoadPrefs reads config.json from dir; a missing file gives the defaults.
 func LoadPrefs(dir string) (*Prefs, error) {
-	p := &Prefs{Path: filepath.Join(dir, "config.json"), UI: "normal", Theme: BuiltinThemes[0].Name, HUD: "auto"}
+	p := &Prefs{Path: filepath.Join(dir, "config.json"), UI: "normal", Theme: BuiltinThemes[0].Name, HUD: "auto",
+		Hints: true, Keys: "play"}
 	err := readJSON(p.Path, p)
+	if p.Keys != "last" && findMode(p.Keys) < 0 {
+		p.Keys = "play"
+	}
 	if UIScale(p.UI) < 0 {
 		p.UI = "normal"
 	}

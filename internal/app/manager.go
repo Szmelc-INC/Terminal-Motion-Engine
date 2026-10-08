@@ -12,6 +12,7 @@ import (
 
 // mItem is one row of a manager list.
 type mItem struct {
+	id              int // position in the list behind the page, where it has one
 	name, tag, info string
 	user, active    bool
 	swatch          []engine.RGB

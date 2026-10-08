@@ -367,7 +367,9 @@ func (f *Finder) draw(a *App) {
 	}
 	s := a.scr
 	w, h := a.dim(112, 34)
-	x, y := a.window("Find media", w, h)
+	top, bottom := a.desk()
+	h = min(h, bottom-top)
+	x, y := a.window("F9 · Find media", w, h)
 	a.on(0, 0, s.W, s.H, func(tty.Event, int, int) {})
 	s.Text(x+w-4, y, " ✕ ", cRed, cSel, engine.AttrBold, -1)
 	a.on(x+w-4, y, 3, 1, func(ev tty.Event, _, _ int) {
@@ -802,8 +804,8 @@ func (f *Finder) key(a *App, ev tty.Event) {
 			a.playItem(it, true)
 		}
 	case tty.KeyRune:
-		if ev.Ctrl || ev.Alt {
-			a.playerKey(ev) // picture and interface size still work here
+		if ev.Ctrl || ev.Alt || ev.Rune == '<' || ev.Rune == '>' {
+			a.playerKey(ev) // picture and interface size, and the other windows
 			return
 		}
 		switch ev.Rune {

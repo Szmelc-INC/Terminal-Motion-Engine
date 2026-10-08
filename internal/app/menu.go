@@ -1,6 +1,8 @@
 package app
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/engine"
@@ -16,9 +18,17 @@ type page interface {
 	hint() string
 }
 
+// tinter is a page whose tab has a color of its own.
+type tinter interface {
+	tint() (uint32, bool)
+}
+
 // panel is a window of pages: a group of related settings or a manager.
+// A panel that belongs to a bind mode makes that mode the active one when
+// it opens, and wears its color.
 type panel struct {
 	id, title string
+	mode      string
 	pages     []page
 }
 
@@ -94,14 +104,20 @@ func (m *Menu) setTab(t int) {
 func (m *Menu) draw(a *App) {
 	s := a.scr
 	w, h := a.dim(66, 22)
+	top, bottom := a.desk()
+	h = min(h, bottom-top)
 	m.w = w
 	if !m.placed {
-		m.x, m.y, m.placed = (s.W-w)/2, max(0, (s.H-h)/2-1), true
+		m.x, m.y, m.placed = (s.W-w)/2, top+max(0, (bottom-top-h)/2-1), true
 	}
 	m.x = max(0, min(s.W-w, m.x))
-	m.y = max(0, min(s.H-h, m.y))
+	m.y = max(top, min(bottom-h, m.y))
 	x, y := m.x, m.y
-	a.frame(m.panel.title, x, y, w, h)
+	title := m.panel.title
+	if f := a.curF(); f >= 0 {
+		title = "F" + itoa(f+1) + " · " + title
+	}
+	a.frame(title, x, y, w, h)
 	a.on(x, y, w, h, func(tty.Event, int, int) {})
 
 	// Title bar: drag to move, ✕ to close.
@@ -119,6 +135,20 @@ func (m *Menu) draw(a *App) {
 			a.menu = nil
 		}
 	})
+	// ‹ › step through the twelve windows.
+	for i, arrow := range []string{" ‹ ", " › "} {
+		ax, d := x+w-10+3*i, 2*i-1
+		fg := cDim
+		if a.hover(ax, y, 3, 1) {
+			fg = cFg
+		}
+		s.Text(ax, y, arrow, fg, cSel, engine.AttrBold, -1)
+		a.on(ax, y, 3, 1, func(ev tty.Event, _, _ int) {
+			if clicked(ev) {
+				a.stepPanel(d)
+			}
+		})
+	}
 
 	// Tabs.
 	tx := x + 1
@@ -128,10 +158,21 @@ func (m *Menu) draw(a *App) {
 			break
 		}
 		fg, bg, attr := cDim, cPanel, uint8(0)
+		tint, own := cAccent, false
+		if t, ok := pg.(tinter); ok {
+			if c, ok := t.tint(); ok {
+				tint, own = c, true
+			}
+		}
+		if mi := findMode(m.panel.mode); mi >= 0 && !own {
+			tint = modeColor(mi)
+		}
 		if i == m.tab {
-			fg, bg, attr = cPanel, cAccent, engine.AttrBold
+			fg, bg, attr = cPanel, tint, engine.AttrBold
 		} else if a.hover(tx, y+1, len([]rune(label)), 1) {
 			fg, bg = cFg, cHot
+		} else if own {
+			fg = tint
 		}
 		s.Text(tx, y+1, label, fg, bg, attr, -1)
 		i := i
@@ -180,8 +221,77 @@ var (
 	pgPresets, pgPalettes, pgCharsets, pgThemes, pgSounds, pgFX *managerPage
 	pgEditor                                                    = &paletteEditPage{}
 	pgPrefs                                                     *fieldsPage
+	pgPlaylist, pgDownloads                                     *managerPage
+	pgNow                                                       = &listPage{name: "Now playing", mode: -1, lines: nowLines}
 	panels                                                      []*panel
 )
+
+// fkey is one of the twelve windows behind the F keys.
+type fkey struct {
+	name  string // on the F key strip
+	panel string // the panel it opens; empty for the media finder
+}
+
+var fkeys = [12]fkey{
+	{"Keys", "keys"}, {"Picture", "picture"}, {"Adjust", "adjust"}, {"Effects", "effects"},
+	{"Sound", "sound"}, {"SoundFX", "soundfx"}, {"Presets", "presets"}, {"Palettes", "palettes"},
+	{"Find", ""}, {"Media", "media"}, {"Playback", "playback"}, {"Prefs", "prefs"},
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// curF is the number, from 0, of the F key window in front, or -1.
+func (a *App) curF() int {
+	switch {
+	case a.finderOpen:
+		return 8
+	case a.menu == nil:
+		return -1
+	}
+	for i, f := range fkeys {
+		if f.panel == a.menu.panel.id {
+			return i
+		}
+	}
+	return -1
+}
+
+// openF opens the window behind an F key; pressed again, it closes it.
+func (a *App) openF(i int) {
+	if i < 0 || i >= len(fkeys) {
+		return
+	}
+	a.browser = nil
+	if i == a.curF() {
+		a.menu, a.finderOpen = nil, false
+		return
+	}
+	f := fkeys[i]
+	if f.panel == "" {
+		a.openFinder("")
+		return
+	}
+	a.finderOpen = false
+	tab := -1
+	if f.panel == "keys" {
+		tab = a.mode // the keys in use come first
+	}
+	if a.menu != nil && a.menu.panel.id == f.panel {
+		a.menu = nil // openPanel would take the same page for a toggle
+	}
+	a.openPanel(f.panel, tab)
+}
+
+// stepPanel goes to the next or the previous F key window.
+func (a *App) stepPanel(d int) {
+	i := a.curF()
+	if i < 0 {
+		if i = -1; d < 0 {
+			i = len(fkeys)
+		}
+	}
+	a.openF(((i+d)%len(fkeys) + len(fkeys)) % len(fkeys))
+}
 
 func init() {
 	pgPresets, pgPalettes = newPresetManager(), newPaletteManager()
@@ -189,25 +299,36 @@ func init() {
 	pgSounds, pgFX = newSoundManager(), newFXManager()
 	audio := func(group string) page { return &optionsPage{group: "Audio: " + group, name: group} }
 	pgPrefs = &fieldsPage{name: "Preferences", fields: prefFields}
+	pgPlaylist, pgDownloads = newPlaylistManager(), newDownloadManager()
+	keys := &panel{id: "keys", title: "Keys — a set for every bind mode"}
+	for i, m := range modes {
+		keys.pages = append(keys.pages, &listPage{name: strings.ToUpper(m.name), mode: i, lines: modeLines(i)})
+	}
+	keys.pages = append(keys.pages, &listPage{name: "Everywhere", mode: -1, lines: coreLines},
+		&listPage{name: "Mouse", mode: -1, lines: mouseLines})
 	panels = []*panel{
-		{id: "picture", title: "Picture — render, color, dither", pages: []page{
+		keys,
+		{id: "picture", mode: "video", title: "Picture — render, color, dither", pages: []page{
 			&optionsPage{group: "Render"}, &optionsPage{group: "Color"}, &optionsPage{group: "Dither"},
-			&optionsPage{group: "Playback"},
 		}},
-		{id: "adjust", title: "Adjust & filters — light, color, grade, detail", pages: []page{
+		{id: "adjust", mode: "color", title: "Adjust & filters — light, color, grade, detail", pages: []page{
 			&optionsPage{group: "Adjust"}, &optionsPage{group: "Filter"},
 		}},
-		{id: "effects", title: "Effects — tape, tube, glitch, time", pages: []page{
+		{id: "effects", mode: "fx", title: "Effects — tape, tube, glitch, time", pages: []page{
 			pgFX, &optionsPage{group: "Effects"}, &optionsPage{group: "Filter", name: "Filter & detail"},
 		}},
-		{id: "sound", title: "Sound — tone, dynamics, space", pages: []page{
+		{id: "sound", mode: "audio", title: "Sound — tone, dynamics, space", pages: []page{
 			audio("Tone"), audio("EQ"), audio("Dynamics"), audio("Space"),
 		}},
-		{id: "soundfx", title: "Sound effects — motion, lo-fi, synth", pages: []page{
+		{id: "soundfx", mode: "audio", title: "Sound effects — motion, lo-fi, synth", pages: []page{
 			audio("Motion"), audio("Lo-fi"), audio("Synth"),
 		}},
 		{id: "presets", title: "Presets", pages: []page{pgPresets, pgSounds, pgFX}},
 		{id: "palettes", title: "Palettes & symbols", pages: []page{pgPalettes, pgEditor, pgCharsets}},
+		{id: "media", title: "Media — playlist and downloads", pages: []page{pgPlaylist, pgDownloads}},
+		{id: "playback", mode: "play", title: "Playback — speed, size, sync", pages: []page{
+			&optionsPage{group: "Playback"}, pgNow,
+		}},
 		{id: "prefs", title: "Preferences & themes", pages: []page{pgPrefs, pgThemes}},
 	}
 }
@@ -247,7 +368,8 @@ func (a *App) openPanel(id string, tab int) {
 	if tab >= 0 {
 		m.setTab(tab)
 	}
-	a.menu = m
+	a.menu, a.finderOpen = m, false
+	a.follow(p.mode)
 }
 
 // showPage opens the panel that holds a page, on that page. A page that is
@@ -275,4 +397,11 @@ func (a *App) showPage(pg page) {
 	}
 }
 
-func (a *App) toggleMenu(tab int) { a.openPanel("picture", tab) }
+// toggleMenu opens or closes the panel of the active bind mode.
+func (a *App) toggleMenu(tab int) {
+	if a.menu != nil && tab < 0 {
+		a.menu = nil
+		return
+	}
+	a.openPanel(modes[a.mode].panel, tab)
+}

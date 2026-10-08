@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -46,6 +47,7 @@ var extras = map[string]extra{
 	"hud":        {true, "HUD visibility: auto, on, off"},
 	"ui":         {true, "interface size: compact, normal, large, huge"},
 	"stats":      {false, "show the performance overlay"},
+	"keys":       {true, "bind mode to start in: play, video, color, fx, audio (termo keys lists the keys)"},
 	"depth":      {true, "terminal color depth: 24, 8 or 4 (default: auto-detect)"},
 	"start":      {true, "start position in seconds"},
 	"at":         {true, "snap: time of the frame to print, seconds"},
@@ -283,7 +285,7 @@ func run(argv []string) error {
 	if len(c.args) > 0 {
 		switch c.args[0] {
 		case "play", "snap", "bench", "info", "presets", "palettes", "charsets", "themes", "options",
-			"find", "search", "get", "sounds", "effects":
+			"find", "search", "get", "sounds", "effects", "keys":
 			// A file that happens to share a command's name still plays.
 			if _, err := os.Stat(c.args[0]); err != nil || c.args[0] == "play" {
 				cmd, c.args = c.args[0], c.args[1:]
@@ -299,6 +301,8 @@ func run(argv []string) error {
 		return cmdCharsets(c, lib)
 	case "themes":
 		return cmdThemes(c, lib)
+	case "keys":
+		return cmdKeys(c)
 	case "sounds":
 		for _, s := range lib.AllSounds() {
 			tag := "user"
@@ -405,7 +409,12 @@ func cmdPlay(c *cli, store *app.Store, lib *app.Library, find bool) error {
 	}
 	sink, _ := c.get("audio-sink")
 	soundName, _ := c.get("sound")
+	keys, _ := c.get("keys")
+	if keys != "" && !slices.Contains(app.ModeNames(), keys) {
+		return fmt.Errorf("--keys: %q is not one of %s", keys, strings.Join(app.ModeNames(), ", "))
+	}
 	return app.Run(app.Config{
+		Keys:  keys,
 		Sound: soundName, UIScale: ui, Lib: lib, Prefs: prefs, Find: findQuery, FindSite: findSite, Streams: streams,
 		Files: files, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
 		HWAccel: c.has("hwaccel"), HUD: hud, Depth: depth, Start: start, Stats: c.has("stats") || prefs.Stats,
@@ -903,6 +912,40 @@ func cmdPresets(c *cli, store *app.Store) error {
 	return nil
 }
 
+// cmdKeys prints the keys of the player: every bind mode and the keys that
+// work in all of them, or one of those sections.
+func cmdKeys(c *cli) error {
+	want := ""
+	if len(c.args) > 0 {
+		want = strings.ToLower(c.args[0])
+	}
+	found := false
+	for _, sec := range app.KeyTable() {
+		if want != "" && want != sec.Name {
+			continue
+		}
+		if found {
+			fmt.Println()
+		}
+		found = true
+		if sec.About != "" {
+			fmt.Printf("%s keys (--keys %s) — %s\n", strings.ToUpper(sec.Name), sec.Name, sec.About)
+		} else {
+			fmt.Println("In every mode")
+		}
+		for _, l := range sec.Lines {
+			fmt.Printf("  %-24s %s\n", l[0], l[1])
+		}
+	}
+	if !found {
+		return fmt.Errorf("unknown key set %q (%s, core)", want, strings.Join(app.ModeNames(), ", "))
+	}
+	if want == "" {
+		fmt.Println("\nTab and Shift+Tab step through the modes; Alt+1 … Alt+5 pick one.")
+	}
+	return nil
+}
+
 func usage(w io.Writer) {
 	fmt.Fprintf(w, `termo %s — play GIFs and videos in the terminal as ASCII / ANSI art
 
@@ -922,6 +965,7 @@ Usage:
   termo sounds                      list sound presets (--sound NAME starts with one)
   termo effects                     list effect presets and filters (--fx NAME, --filter NAME)
   termo options                     list every look option with its values
+  termo keys [MODE]                 list the keys of the player (play, video, color, fx, audio, core)
 
 Common options (termo options lists all of them):
   -m, --mode MODE        half | quad | sextant | braille | ascii
@@ -938,12 +982,17 @@ Common options (termo options lists all of them):
       --loop / --no-loop loop playback (default: on for clips without sound)
       --volume V  --mute  --no-audio  --speed X
       --hud auto|on|off  --stats  --depth 24|8|4  --hwaccel
+      --keys MODE        bind mode to start in: play | video | color | fx | audio
 
 In the player:
-  Space pause · ←/→ seek · ↑/↓ volume · r RANDOMIZE look · R random palette · u undo
-  Tab or s settings menu (presets: save, load, edit, rename, delete) · p/P cycle presets
-  v/d/c cycle mode/dither/palette · ? all keys · q quit
-  Mouse: click = pause, right-click = menu, wheel = volume, drag the seek bar and sliders.
+  Space pause · ←/→ seek · ↑/↓ volume · u undo · q quit · these work everywhere
+  Tab / Shift+Tab switch the bind mode: PLAY · VIDEO · COLOR · FX · AUDIO (Alt+1 … Alt+5).
+  The letters belong to the mode, and the bar shows them in its color. In every mode:
+  r random · p/P presets · a letter = up, its capital = down · = / - repeat it · Enter the
+  mode's panel · Backspace reset.
+  F1 keys · F2 picture · F3 adjust · F4 effects · F5 sound · F6 sound fx · F7 presets
+  F8 palettes · F9 find media · F10 playlist & downloads · F11 playback · F12 preferences
+  Mouse: click = pause, right-click = panel, wheel = volume; everything on the bars clicks.
 
 Presets are stored in %s
 `, version, app.StorePath())

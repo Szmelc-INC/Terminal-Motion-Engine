@@ -40,6 +40,7 @@ type Config struct {
 	FindSite  string   // name of the site to search first
 	Streams   []Stream // what is known about web links among Files
 	Sound     string   // name of the sound preset the audio settings came from
+	Keys      string   // bind mode to start in; empty = what the preferences say
 }
 
 // Stream describes a playlist entry that plays from the web.
@@ -72,7 +73,7 @@ type App struct {
 	s         engine.Settings
 	applied   engine.Playback
 	preset    string
-	history   []engine.Look
+	history   []snapshot
 	lastTouch time.Time
 	hudShown  bool
 
@@ -114,6 +115,10 @@ type App struct {
 	stats        bool
 	toast        string
 	toastUntil   time.Time
+	hintY        int   // row of the key hints at the last draw, or -1
+	toastTint    bool  // the toast wears the color of the bind mode
+	mode         int   // the active bind mode, an index into modes
+	lastBind     *bind // the last two-way key of the mode, for - and =
 	hits         []hit
 	capture      *hit
 	mx, my       int
@@ -144,8 +149,6 @@ type App struct {
 	form       *Form
 
 	menu    *Menu
-	help    bool
-	helpTop int
 	browser *Browser
 	prompt  *Prompt
 	confirm *Confirm
@@ -182,13 +185,17 @@ func Run(cfg Config) (err error) {
 		a.lib = &Library{Path: filepath.Join(filepath.Dir(a.store.Path), "library.json")}
 	}
 	if a.prefs == nil {
-		a.prefs = &Prefs{Path: filepath.Join(filepath.Dir(a.store.Path), "config.json"), Theme: BuiltinThemes[0].Name}
+		a.prefs = &Prefs{Path: filepath.Join(filepath.Dir(a.store.Path), "config.json"), Theme: BuiltinThemes[0].Name, Hints: true}
 	}
 	if th, ok := a.lib.FindTheme(a.prefs.Theme); ok {
 		applyTheme(th)
 	}
 	if a.hud == "" {
 		a.hud = "auto"
+	}
+	a.mode = max(0, findMode(a.prefs.startMode()))
+	if i := findMode(cfg.Keys); i >= 0 {
+		a.mode = i
 	}
 	a.applied = a.s.Playback
 	a.rend.TermDepth = cfg.Depth
@@ -739,11 +746,25 @@ func (a *App) speedNow() float64 {
 // --- look changes ----------------------------------------------------------
 
 func (a *App) say(msg string, d time.Duration) {
-	a.toast, a.toastUntil, a.dirty = msg, time.Now().Add(d), true
+	a.toast, a.toastUntil, a.toastTint, a.dirty = msg, time.Now().Add(d), false, true
+}
+
+// sayTint is say in the color of the active bind mode.
+func (a *App) sayTint(msg string, d time.Duration) {
+	a.say(msg, d)
+	a.toastTint = true
+}
+
+// snapshot is one undo step: the look and the sound, with the names of the
+// presets they came from.
+type snapshot struct {
+	look              engine.Look
+	sound             engine.Sound
+	preset, soundName string
 }
 
 func (a *App) pushHistory() {
-	a.history = append(a.history, a.s.Look)
+	a.history = append(a.history, snapshot{a.s.Look, a.s.Sound, a.preset, a.soundName})
 	if len(a.history) > 100 {
 		a.history = a.history[1:]
 	}
@@ -754,11 +775,16 @@ func (a *App) undo() {
 		a.say("nothing to undo", time.Second)
 		return
 	}
-	a.s.Look = a.history[len(a.history)-1]
+	h := a.history[len(a.history)-1]
 	a.history = a.history[:len(a.history)-1]
+	what := "undo → " + Summary(h.look)
+	if h.sound != a.s.Sound {
+		what = "undo → sound: " + engine.SoundSummary(h.sound)
+	}
+	a.s.Look, a.s.Sound, a.preset, a.soundName = h.look, h.sound, h.preset, h.soundName
 	a.s.Look.Resample++
 	a.changed()
-	a.say("undo → "+Summary(a.s.Look), 1500*time.Millisecond)
+	a.say(what, 1500*time.Millisecond)
 }
 
 func (a *App) randomize(paletteOnly bool) {
@@ -784,7 +810,11 @@ func (a *App) nudge(key string, dir int) {
 	}
 	o.Nudge(&a.s, dir)
 	a.changed()
-	a.say(o.Label+": "+o.String(&a.s), 1200*time.Millisecond)
+	msg := o.Label + ": " + o.String(&a.s)
+	if !o.IsActive(&a.s) {
+		msg += "   (not in use with the current settings)"
+	}
+	a.say(msg, 1200*time.Millisecond)
 }
 
 func (a *App) loadPreset(p engine.Preset) {

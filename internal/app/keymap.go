@@ -10,42 +10,118 @@ import (
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/tty"
 )
 
-// bind ties one or more keys to an action. keys is a space-separated list of
-// key names as produced by keyName.
+// bind ties keys to an action. The keys in keys run it forwards; those in
+// rev — the Shift twin of a letter, as a rule — run it backwards. Both are
+// space-separated lists of key names as keyName produces them.
 type bind struct {
-	keys string
-	desc string
-	fn   func(a *App)
+	keys, rev string
+	short     string // label on the hint row; empty keeps the bind off it
+	desc      string // line on the keys page; empty keeps the bind off it
+	opt       string // the option the bind steps, if it steps one
+	fn        func(a *App, dir int)
 }
 
-// layer is a named set of key bindings. The "global" layer is always active;
-// the others are bind modes, of which one is active at a time.
+// layer is a named set of key bindings. The core layer always applies. The
+// others are bind modes: one is active at a time, it is asked first, and so
+// the same letters do different work in each of them.
 type layer struct {
 	name, title string
-	color       uint32
+	about       string       // what the mode is for, in a few words
+	turn        float64      // hue of the mode: degrees away from the theme's accent
+	panel       string       // the panel that belongs to the mode; Enter opens it
+	reset       func(a *App) // puts what the mode controls back to normal
 	binds       []bind
-	index       map[string]*bind
+	index       map[string]target
 }
 
-func (l *layer) find(key string) *bind {
+// target is what a key leads to: a bind and the direction to run it in.
+type target struct {
+	b   *bind
+	dir int
+}
+
+func (l *layer) find(key string) (target, bool) {
 	if l.index == nil {
-		l.index = map[string]*bind{}
+		l.index = map[string]target{}
 		for i := range l.binds {
-			if l.binds[i].fn == nil {
-				continue // a help-only line
+			b := &l.binds[i]
+			if b.fn == nil {
+				continue // a line of help
 			}
-			for _, k := range strings.Fields(l.binds[i].keys) {
-				l.index[k] = &l.binds[i]
+			for _, k := range strings.Fields(b.keys) {
+				l.index[k] = target{b, 1}
+			}
+			for _, k := range strings.Fields(b.rev) {
+				l.index[k] = target{b, -1}
 			}
 		}
 	}
-	return l.index[key]
+	t, ok := l.index[key]
+	return t, ok
 }
 
-// pair adds two binds that act in opposite directions; their shared help
-// line is a separate entry without an action.
-func (l *layer) pair(fwd, back string, f, b func(*App)) {
-	l.binds = append(l.binds, bind{fwd, "", f}, bind{back, "", b})
+// key binds keys to an action that has no direction.
+func key(keys, short, desc string, fn func(a *App)) bind {
+	return bind{keys: keys, short: short, desc: desc, fn: func(a *App, _ int) { fn(a) }}
+}
+
+// step binds keys to an action that goes two ways.
+func step(keys, rev, short, desc string, fn func(a *App, dir int)) bind {
+	return bind{keys: keys, rev: rev, short: short, desc: desc, fn: fn}
+}
+
+// note is a line of help without an action.
+func note(keys, desc string) bind { return bind{keys: keys, desc: desc} }
+
+// opt binds keys to an entry of the option table: a number moves by n of its
+// steps, a list goes to its next or previous choice, a switch flips. A
+// negative n turns the keys around, for settings where less is more.
+func opt(keys, rev, option, short string, n int) bind {
+	o := engine.FindOption(option)
+	if o == nil {
+		panic("keymap: no option named " + option)
+	}
+	desc := o.Label
+	switch {
+	case o.Kind == engine.KBool:
+		desc += " on / off"
+	case o.Kind == engine.KEnum && rev == "":
+		desc += ": next choice"
+	case o.Kind == engine.KEnum:
+		desc += ": next / previous"
+	case n < 0:
+		desc += " down / up"
+	default:
+		desc += " up / down"
+	}
+	return bind{keys: keys, rev: rev, short: short, desc: desc, opt: option,
+		fn: func(a *App, dir int) { a.nudge(option, dir*n) }}
+}
+
+// named gives a bind another line on the keys page, where the label of its
+// option says too little out of its panel.
+func named(b bind, desc string) bind { b.desc = desc; return b }
+
+// geo binds keys to a number that is better moved by a ratio than by a step:
+// a frequency. factor is what the forward keys multiply it by.
+func geo(keys, rev, option, short, desc string, factor float64) bind {
+	o := engine.FindOption(option)
+	if o == nil {
+		panic("keymap: no option named " + option)
+	}
+	return bind{keys: keys, rev: rev, short: short, desc: desc, opt: option, fn: func(a *App, dir int) {
+		span := o.Max - o.Min
+		v := o.Min + o.Frac(&a.s)*span
+		nv := v * math.Pow(factor, float64(dir))
+		// Near zero a ratio gets nowhere: move by at least three steps.
+		if least := 3 * o.Step; math.Abs(nv-v) < least {
+			nv = v + least*float64(dir)*math.Copysign(1, factor-1)
+		}
+		a.touch()
+		o.SetFrac(&a.s, (nv-o.Min)/span)
+		a.changed()
+		a.say(o.Label+": "+o.String(&a.s), 1200*time.Millisecond)
+	}}
 }
 
 var keyNames = map[tty.Key]string{
@@ -91,134 +167,385 @@ func keyName(ev tty.Event) string {
 	return b.String()
 }
 
-// prettyKeys formats a bind's key list for the help screen.
-func prettyKeys(keys string) string {
-	r := strings.NewReplacer("left", "←", "right", "→", "up", "↑", "down", "↓", "space", "Space",
-		"ctrl+", "Ctrl+", "alt+", "Alt+", "shift+", "Shift+", "esc", "Esc", "tab", "Tab", "home", "Home",
-		"enter", "Enter", "pgup", "PgUp", "pgdn", "PgDn")
-	f := strings.Fields(keys)
-	if len(f) > 2 {
+var keyPretty = strings.NewReplacer("left", "←", "right", "→", "up", "↑", "down", "↓", "space", "Space",
+	"ctrl+", "Ctrl+", "alt+", "Alt+", "shift+", "Shift+", "esc", "Esc", "tab", "Tab", "home", "Home",
+	"enter", "Enter", "pgup", "PgUp", "pgdn", "PgDn", "backspace", "Backspace")
+
+// prettyKey formats one key name for the screen.
+func prettyKey(k string) string {
+	if len(k) > 1 && k[0] == 'f' && k[1] >= '1' && k[1] <= '9' {
+		return "F" + k[1:]
+	}
+	return keyPretty.Replace(k)
+}
+
+// prettyKeys formats a bind's keys for the keys page: the first two of a
+// bind without a direction, or the first of each direction.
+func prettyKeys(b bind) string {
+	f, r := strings.Fields(b.keys), strings.Fields(b.rev)
+	switch {
+	case len(r) > 0 && len(f) > 0:
+		f = []string{f[0], r[0]}
+	case len(f) > 2 && b.fn != nil:
 		f = f[:2]
 	}
-	for i, k := range f {
-		if len(k) > 1 && k[0] == 'f' && k[1] >= '1' && k[1] <= '9' {
-			f[i] = "F" + k[1:]
-			continue
-		}
-		f[i] = r.Replace(k)
+	for i := range f {
+		f[i] = prettyKey(f[i])
 	}
 	return strings.Join(f, " ")
 }
 
-func nudger(key string, dir int) func(*App) { return func(a *App) { a.nudge(key, dir) } }
+// --- the core layer -----------------------------------------------------------
 
-var globalLayer = &layer{name: "global", title: "Everywhere", color: cAccent}
+// core holds the keys that work in every mode. It owns no plain letter that
+// a mode would want: the transport, the windows and the handful of letters
+// that had better mean the same thing everywhere.
+var core = &layer{name: "core", title: "Everywhere"}
+
+// modes are the bind modes, in the order Tab steps through them.
+var modes []*layer
 
 func init() {
-	g := globalLayer
-	g.binds = []bind{
-		{"space k", "play / pause", func(a *App) { a.setPlaying(!a.isPlaying()) }},
-		{"left", "seek back 5 s", func(a *App) { a.seekBy(-5) }},
-		{"right", "seek forward 5 s", func(a *App) { a.seekBy(5) }},
-		{"shift+left", "seek back 30 s", func(a *App) { a.seekBy(-30) }},
-		{"shift+right", "seek forward 30 s", func(a *App) { a.seekBy(30) }},
-		{",", "previous frame", func(a *App) { a.stepFrame(-1) }},
-		{".", "next frame", func(a *App) { a.stepFrame(1) }},
-		{"home", "jump to the start", func(a *App) { a.seek(0) }},
-		{"up", "volume up", nudger("volume", 1)},
-		{"down", "volume down", nudger("volume", -1)},
-		{"m", "mute", nudger("mute", 1)},
-		{"] [", "speed up / down", nil},
-		{"l", "loop", nudger("loop", 1)},
+	core.binds = []bind{
+		key("space", "", "play / pause", func(a *App) { a.setPlaying(!a.isPlaying()) }),
+		step("right", "left", "", "seek 5 s forward / back", func(a *App, d int) { a.seekBy(float64(5 * d)) }),
+		step("shift+right", "shift+left", "", "seek 30 s forward / back", func(a *App, d int) { a.seekBy(float64(30 * d)) }),
+		step(".", ",", "", "next / previous frame", func(a *App, d int) { a.stepFrame(d) }),
+		key("home", "", "jump to the start", func(a *App) { a.seek(0) }),
+		note("0 … 9", "jump to 0 – 90 %"),
+		step("up", "down", "", "volume up / down", func(a *App, d int) { a.nudge("volume", d) }),
+		key("m", "", "mute", func(a *App) { a.nudge("mute", 1) }),
+		step("]", "[", "", "speed up / down", func(a *App, d int) { a.nudge("speed", d) }),
 
-		{"ctrl+= ctrl++ ctrl+shift+= ctrl+shift++ z", "picture bigger (interface unchanged)", func(a *App) { a.zoom(1) }},
-		{"ctrl+- ctrl+_ ctrl+shift+- ctrl+shift+_ Z", "picture smaller", func(a *App) { a.zoom(-1) }},
-		{"ctrl+0 \\", "picture size back to 100 %", func(a *App) { a.zoom(0) }},
-		{"alt+left alt+right alt+up alt+down", "pan a zoomed picture", nil},
-		{"alt+= alt++ alt+shift+= alt+shift++", "interface bigger (picture unchanged)", func(a *App) { a.setUI(a.ui + 1) }},
-		{"alt+- alt+_ alt+shift+- alt+shift+_", "interface smaller", func(a *App) { a.setUI(a.ui - 1) }},
-		{"alt+0", "interface size back to normal", func(a *App) { a.setUI(1) }},
+		step("tab `", "shift+tab ~", "", "next / previous bind mode", func(a *App, d int) { a.setMode(a.mode + d) }),
+		note("alt+1 … alt+5", "bind mode: play · video · color · fx · audio"),
+		key("enter", "", "open the panel of the active mode", func(a *App) { a.openPanel(modes[a.mode].panel, -1) }),
+		key("backspace", "", "reset what the active mode controls", func(a *App) { a.resetMode() }),
+		step("= +", "- _", "", "repeat the last setting key: up / down", func(a *App, d int) { a.again(d) }),
 
-		{"r", "RANDOMIZE the whole look", func(a *App) { a.randomize(false) }},
-		{"R", "randomize the palette only", func(a *App) { a.randomize(true) }},
-		{"u U", "undo the last change", func(a *App) { a.undo() }},
-		{"tab f2 s S", "picture: render mode, colors, dither", func(a *App) { a.openPanel("picture", -1) }},
-		{"f3", "adjust & filters: light, color, grade", func(a *App) { a.openPanel("adjust", -1) }},
-		{"f4", "effects: VHS, CRT, glitch, 3D + presets", func(a *App) { a.openPanel("effects", -1) }},
-		{"f5", "sound: tone, equaliser, dynamics, space", func(a *App) { a.openPanel("sound", -1) }},
-		{"f6", "sound effects: pitch, lo-fi, synth", func(a *App) { a.openPanel("soundfx", -1) }},
-		{"f7", "presets: looks, sounds and effects", func(a *App) { a.openPanel("presets", -1) }},
-		{"f8", "palettes & symbols: manage, generate", func(a *App) { a.openPanel("palettes", -1) }},
-		{"f12", "preferences & themes", func(a *App) { a.openPanel("prefs", -1) }},
-		{"p P", "next / previous preset", nil},
-		{"ctrl+s", "save the look as a preset", func(a *App) { a.savePresetPrompt() }},
-		{"t T", "next / previous effect preset", nil},
-		{"w", "random effects", func(a *App) { a.randomFX() }},
-		{"W", "effects off", func(a *App) { a.setFX(engine.BuiltinFX[0]) }},
+		key("f1 ?", "", "keys: this list, a page for every mode", func(a *App) { a.openF(0) }),
+		key("f2", "", "picture: render mode, colors, dither", func(a *App) { a.openF(1) }),
+		key("f3", "", "adjust & filters: light, color, grade", func(a *App) { a.openF(2) }),
+		key("f4", "", "effects: VHS, CRT, glitch, 3D + presets", func(a *App) { a.openF(3) }),
+		key("f5", "", "sound: tone, equaliser, dynamics, space", func(a *App) { a.openF(4) }),
+		key("f6", "", "sound effects: pitch, lo-fi, synth", func(a *App) { a.openF(5) }),
+		key("f7", "", "presets: looks, sounds and effects", func(a *App) { a.openF(6) }),
+		key("f8", "", "palettes & symbols: manage, generate", func(a *App) { a.openF(7) }),
+		key("f9 /", "", "find media on the web: search, download", func(a *App) { a.openF(8) }),
+		key("f10", "", "media: playlist and downloads", func(a *App) { a.openF(9) }),
+		key("f11", "", "playback: speed, size, sync, what is playing", func(a *App) { a.openF(10) }),
+		key("f12", "", "preferences & themes", func(a *App) { a.openF(11) }),
+		step(">", "<", "", "next / previous panel (when F keys are taken)", func(a *App, d int) { a.stepPanel(d) }),
 
-		{"v V", "cycle mode", nil},
-		{"d D", "cycle dither", nil},
-		{"c C", "cycle palette", nil},
-		{"a A", "cycle charset", nil},
-		{"= -", "more / fewer palette colors", nil},
-		{"f", "fit / fill / stretch", nudger("fit", 1)},
-		{"x", "flip X", nudger("flip-x", 1)},
-		{"y", "flip Y", nudger("flip-y", 1)},
-		{"e", "edges", nudger("edges", 1)},
-		{"i", "invert", nudger("invert", 1)},
+		key("ctrl+= ctrl++ ctrl+shift+= ctrl+shift++ z", "", "picture bigger (interface unchanged)", func(a *App) { a.zoom(1) }),
+		key("ctrl+- ctrl+_ ctrl+shift+- ctrl+shift+_ Z", "", "picture smaller", func(a *App) { a.zoom(-1) }),
+		key("ctrl+0 \\", "", "picture size back to 100 %", func(a *App) { a.zoom(0) }),
+		note("alt+← alt+→ alt+↑ alt+↓", "pan a zoomed picture"),
+		key("alt+= alt++ alt+shift+= alt+shift++", "", "interface bigger (picture unchanged)", func(a *App) { a.setUI(a.ui + 1) }),
+		key("alt+- alt+_ alt+shift+- alt+shift+_", "", "interface smaller", func(a *App) { a.setUI(a.ui - 1) }),
+		key("alt+0", "", "interface size back to normal", func(a *App) { a.setUI(1) }),
 
-		{"h", "HUD auto / on / off", func(a *App) {
+		key("u U", "", "undo the last change", func(a *App) { a.undo() }),
+		key("ctrl+s", "", "save the look as a preset", func(a *App) { a.savePresetPrompt() }),
+		key("h", "", "HUD auto / on / off", func(a *App) {
 			a.hud = map[string]string{"auto": "on", "on": "off", "off": "auto"}[a.hud]
 			a.savePrefs()
 			a.say("HUD: "+a.hud, time.Second)
-		}},
-		{"g", "performance stats", func(a *App) { a.stats = !a.stats }},
-		{"o", "open a file", func(a *App) { a.openBrowser() }},
-		{"f9 /", "find media on the web: search, download", func(a *App) { a.openFinder("") }},
-		{"n N", "next / previous file", nil},
-		{"f1 ?", "this help", func(a *App) { a.help, a.helpTop = true, 0 }},
-		{"esc", "close the menu", func(a *App) { a.menu = nil }},
-		{"q Q", "quit", func(a *App) { a.quit = true }},
+		}),
+		key("o", "", "open a file", func(a *App) { a.openBrowser() }),
+		key("esc", "", "close the panel", func(a *App) { a.menu = nil }),
+		key("q Q", "", "quit", func(a *App) { a.quit = true }),
+
+		step("alt+right", "alt+left", "", "", func(a *App, d int) { a.pan(d, 0) }),
+		step("alt+down", "alt+up", "", "", func(a *App, d int) { a.pan(0, d) }),
 	}
-	g.pair("]", "[", nudger("speed", 1), nudger("speed", -1))
-	g.pair("p", "P", func(a *App) { a.cyclePreset(1) }, func(a *App) { a.cyclePreset(-1) })
-	g.pair("t", "T", func(a *App) { a.cycleFX(1) }, func(a *App) { a.cycleFX(-1) })
-	g.pair("v", "V", nudger("mode", 1), nudger("mode", -1))
-	g.pair("d", "D", nudger("dither", 1), nudger("dither", -1))
-	g.pair("c", "C", nudger("palette", 1), nudger("palette", -1))
-	g.pair("a", "A", nudger("charset", 1), nudger("charset", -1))
-	g.pair("= +", "- _", nudger("colors", 1), nudger("colors", -1))
-	g.pair("n", "N", func(a *App) { a.openNext(1) }, func(a *App) { a.openNext(-1) })
-	g.pair("alt+right", "alt+left", func(a *App) { a.pan(1, 0) }, func(a *App) { a.pan(-1, 0) })
-	g.pair("alt+down", "alt+up", func(a *App) { a.pan(0, 1) }, func(a *App) { a.pan(0, -1) })
 	for d := 0; d <= 9; d++ {
 		d := d
-		g.binds = append(g.binds, bind{fmt.Sprint(d), "", func(a *App) {
+		core.binds = append(core.binds, key(fmt.Sprint(d), "", "", func(a *App) {
 			if a.info.Duration > 0 {
 				a.seek(a.info.Duration * float64(d) / 10)
 			}
-		}})
+		}))
 	}
-	g.binds = append(g.binds, bind{"0 … 9", "jump to 0 – 90 %", nil})
+
+	play := &layer{name: "play", title: "Playback", turn: 0, panel: "playback",
+		about: "transport, playlist, speed and sync; r and p work on the whole look"}
+	play.reset = func(a *App) {
+		a.s.Speed, a.s.AudioDelay, a.s.FPS, a.s.Zoom, a.s.PanX, a.s.PanY = 1, 0, 0, 1, 0, 0
+		a.changed()
+		a.say("playback: speed, sync, frame rate and picture size back to normal", 2*time.Second)
+	}
+	play.binds = []bind{
+		step("n", "N", "next", "next / previous file", func(a *App, d int) { a.openNext(d) }),
+		opt("s", "S", "speed", "speed", 1),
+		opt("l", "", "loop", "loop", 1),
+		key("k", "", "play / pause", func(a *App) { a.setPlaying(!a.isPlaying()) }),
+		key("x", "shuffle", "play a random file of the playlist", func(a *App) { a.shuffle() }),
+		opt("a", "A", "audio-delay", "sync", 5),
+		opt("f", "F", "fps", "fps cap", 1),
+		step("p", "P", "look", "next / previous look preset", func(a *App, d int) { a.cyclePreset(d) }),
+		key("r", "random", "RANDOMIZE the whole look", func(a *App) { a.randomize(false) }),
+		key("R", "", "randomize the palette only", func(a *App) { a.randomize(true) }),
+		key("i", "info", "what is playing: size, rate, codec", func(a *App) { a.showPage(pgNow) }),
+		key("e", "list", "the playlist", func(a *App) { a.showPage(pgPlaylist) }),
+		key("g", "stats", "performance statistics", func(a *App) { a.stats = !a.stats; a.savePrefs() }),
+	}
+
+	video := &layer{name: "video", title: "Picture", turn: 150, panel: "picture",
+		about: "how the picture is drawn: glyphs, palette, dither, geometry"}
+	video.binds = []bind{
+		opt("v", "V", "mode", "mode", 1),
+		opt("c", "C", "palette", "palette", 1),
+		opt("d", "D", "dither", "dither", 1),
+		opt("a", "A", "charset", "charset", 1),
+		step("p", "P", "preset", "next / previous look preset", func(a *App, d int) { a.cyclePreset(d) }),
+		key("r", "random", "RANDOMIZE the whole look", func(a *App) { a.randomize(false) }),
+		key("R", "", "randomize the palette only", func(a *App) { a.randomize(true) }),
+		opt("k", "K", "colors", "colors", 1),
+		named(opt("w", "W", "dither-amount", "dither amt", 1), "Dither amount up / down"),
+		opt("s", "S", "scheme", "scheme", 1),
+		opt("j", "J", "hue", "hue", 3),
+		opt("t", "", "color", "color", 1),
+		opt("b", "B", "background", "backgr.", 1),
+		opt("f", "F", "fit", "fit", 1),
+		opt("x", "", "flip-x", "flip x", 1),
+		opt("y", "", "flip-y", "flip y", 1),
+		opt("g", "G", "mirror", "mirror", 1),
+		opt("e", "E", "edges", "edges", 1),
+		opt("i", "", "invert", "invert", 1),
+	}
+
+	color := &layer{name: "color", title: "Color & light", turn: 290, panel: "adjust",
+		about: "tone and grade: light, contrast, color balance, filters"}
+	color.binds = []bind{
+		opt("b", "B", "brightness", "bright", 2),
+		opt("c", "C", "contrast", "contrast", 1),
+		opt("g", "G", "gamma", "gamma", 1),
+		opt("s", "S", "saturation", "satur.", 1),
+		opt("p", "P", "filter", "filter", 1),
+		opt("f", "F", "filter-amount", "filter amt", 2),
+		key("r", "random", "a random filter", func(a *App) { a.randomGrade() }),
+		opt("e", "E", "exposure", "exposure", 1),
+		opt("t", "T", "temperature", "temp.", 1),
+		opt("i", "I", "tint", "tint", 1),
+		opt("j", "J", "hue-shift", "hue", 3),
+		opt("v", "V", "vibrance", "vibrance", 1),
+		opt("d", "D", "shadows", "shadows", 1),
+		opt("l", "L", "highlights", "lights", 1),
+		opt("k", "K", "black", "black pt", 2),
+		opt("w", "W", "white", "white pt", -2),
+		opt("a", "A", "fade", "fade", 1),
+		opt("x", "X", "sharpen", "sharp", 2),
+		opt("y", "Y", "vignette", "vignette", 2),
+		opt("n", "N", "glow", "glow", 2),
+	}
+
+	fx := &layer{name: "fx", title: "Effects", turn: 75, panel: "effects",
+		about: "tape, tube, glitch and time effects, and their presets"}
+	fx.reset = func(a *App) { a.setFX(engine.BuiltinFX[0]) }
+	fx.binds = []bind{
+		step("p", "P", "preset", "next / previous effect preset", func(a *App, d int) { a.cycleFX(d) }),
+		key("r", "random", "random effects", func(a *App) { a.randomFX() }),
+		opt("v", "V", "vhs", "vhs", 2),
+		opt("s", "S", "scanlines", "scanlines", 2),
+		opt("c", "C", "curvature", "crt", 2),
+		opt("g", "G", "glitch", "glitch", 2),
+		opt("a", "A", "split", "split", 5),
+		opt("d", "D", "split-mode", "3d", 1),
+		step("e", "E", "poster", "Posterize: fewer / more levels", func(a *App, d int) { a.posterize(d) }),
+		opt("f", "F", "blur", "blur", 1),
+		opt("l", "L", "motion-blur", "trails", 2),
+		opt("x", "X", "pixelate", "pixels", 1),
+		opt("k", "K", "mask", "mask", 1),
+		opt("t", "T", "tracking", "tracking", 2),
+		opt("b", "B", "bleed", "bleed", 2),
+		opt("j", "J", "jitter", "jitter", 2),
+		opt("w", "W", "wave", "wave", 2),
+		opt("n", "N", "grain", "grain", 2),
+		opt("y", "Y", "hue-cycle", "hue spin", 2),
+		opt("i", "", "interlace", "interlace", 1),
+	}
+
+	audio := &layer{name: "audio", title: "Sound", turn: 215, panel: "sound",
+		about: "tone, space, dirt and synth, and the sound presets"}
+	audio.reset = func(a *App) { a.setSound(engine.BuiltinSounds[0]) }
+	audio.binds = []bind{
+		step("p", "P", "preset", "next / previous sound preset", func(a *App, d int) { a.cycleSound(d) }),
+		key("r", "random", "a random sound", func(a *App) { a.randomSound() }),
+		opt("b", "B", "bass", "bass", 2),
+		opt("t", "T", "treble", "treble", 2),
+		opt("d", "D", "mid", "mid", 2),
+		opt("g", "G", "preamp", "gain", 2),
+		opt("f", "F", "pitch", "pitch", 1),
+		opt("v", "V", "reverb", "reverb", 2),
+		opt("e", "E", "echo-delay", "echo", 5),
+		geo("l", "L", "lowpass", "low-pass", "Low-pass: darker / brighter", 0.8),
+		geo("k", "K", "highpass", "high-pass", "High-pass: thinner / fuller", 1.25),
+		opt("a", "A", "drive", "drive", 3),
+		opt("x", "X", "bits", "crush", -1),
+		geo("s", "S", "sample-rate", "rate", "Sample rate: lower / higher", 0.8),
+		opt("j", "J", "tremolo", "tremolo", 2),
+		opt("w", "W", "width", "width", 2),
+		opt("y", "Y", "synth", "synth", 1),
+		opt("c", "", "comp", "compress", 1),
+		opt("i", "", "limiter", "limiter", 1),
+		opt("n", "", "normalize", "normalize", 1),
+	}
+
+	modes = []*layer{play, video, color, fx, audio}
+	for i := range modes {
+		i := i
+		core.binds = append(core.binds, key(fmt.Sprintf("alt+%d", i+1), "", "", func(a *App) { a.setMode(i) }))
+	}
 }
 
-func allLayers() []*layer { return []*layer{globalLayer} }
+// allLayers lists every layer; layers lists those that apply right now, the
+// one that is asked first in front.
+func allLayers() []*layer { return append([]*layer{core}, modes...) }
 
-// layers lists the layers that apply right now, most specific first.
-func (a *App) layers() []*layer { return []*layer{globalLayer} }
+func (a *App) layers() []*layer { return []*layer{modes[a.mode], core} }
 
-// playerKey runs the action bound to a key press.
+// findMode returns the index of the mode with that name, or -1.
+func findMode(name string) int {
+	for i, m := range modes {
+		if strings.EqualFold(m.name, name) {
+			return i
+		}
+	}
+	return -1
+}
+
+// ModeNames lists the bind modes.
+func ModeNames() []string {
+	var out []string
+	for _, m := range modes {
+		out = append(out, m.name)
+	}
+	return out
+}
+
+// playerKey runs the action bound to a key press: the active mode is asked
+// first, then the core layer.
 func (a *App) playerKey(ev tty.Event) {
 	name := keyName(ev)
 	if name == "" {
 		return
 	}
 	for _, l := range a.layers() {
-		if b := l.find(name); b != nil {
-			b.fn(a)
+		if t, ok := l.find(name); ok {
+			if t.b.rev != "" && l != core {
+				a.lastBind = t.b
+			}
+			t.b.fn(a, t.dir)
 			return
 		}
 	}
+}
+
+// --- modes ---------------------------------------------------------------------
+
+// modeTints caches the mode colors of one accent color.
+var modeTints struct {
+	accent uint32
+	set    bool
+	colors []uint32
+}
+
+// modeColor is the color that stands for a bind mode: the accent of the
+// theme with its hue turned, so the five keep their distance on any theme.
+// It follows the theme, hence it is worked out when asked for.
+func modeColor(i int) uint32 {
+	if !modeTints.set || modeTints.accent != cAccent || len(modeTints.colors) != len(modes) {
+		L, ca, cb := engine.ToOklab(engine.FromU32(cAccent))
+		C, hue := math.Hypot(ca, cb), math.Atan2(cb, ca)*180/math.Pi
+		modeTints.accent, modeTints.set, modeTints.colors = cAccent, true, nil
+		for _, m := range modes {
+			if m.turn == 0 {
+				modeTints.colors = append(modeTints.colors, cAccent)
+				continue
+			}
+			// Enough chroma to tell the hues apart, and not so light or so
+			// dark that the hue drowns: a gray or a white accent still
+			// gives five different colors.
+			c := engine.FromOklch(math.Max(0.52, math.Min(0.8, L)), math.Max(0.12, math.Min(0.17, C)), hue+m.turn)
+			modeTints.colors = append(modeTints.colors, c.U32())
+		}
+	}
+	return modeTints.colors[(i%len(modes)+len(modes))%len(modes)]
+}
+
+// tint is the color of the active mode.
+func (a *App) tint() uint32 { return modeColor(a.mode) }
+
+// setMode switches the bind mode and says what its keys are for.
+func (a *App) setMode(i int) {
+	n := len(modes)
+	a.mode = (i%n + n) % n
+	a.lastBind = nil
+	m := modes[a.mode]
+	a.sayTint(strings.ToUpper(m.name)+" keys — "+m.about+"  ·  F1 lists them", 2500*time.Millisecond)
+	if a.prefs != nil && a.prefs.Keys == "last" {
+		a.savePrefs()
+	}
+}
+
+// follow makes the mode of a panel the active one, quietly: the keys go
+// where the user is looking.
+func (a *App) follow(mode string) {
+	if i := findMode(mode); i >= 0 && i != a.mode {
+		a.mode, a.lastBind = i, nil
+	}
+}
+
+// again repeats the last two-way key of the mode, so a setting picked with
+// its letter can be walked up and down with = and -.
+func (a *App) again(dir int) {
+	if a.lastBind == nil {
+		a.say("- and = repeat a setting key: press one first ("+a.someKeys()+")", 2500*time.Millisecond)
+		return
+	}
+	a.lastBind.fn(a, dir)
+}
+
+// someKeys names a few two-way keys of the active mode, as examples.
+func (a *App) someKeys() string {
+	var out []string
+	for _, b := range modes[a.mode].binds {
+		if b.rev != "" && b.short != "" && len(out) < 3 {
+			out = append(out, prettyKey(strings.Fields(b.keys)[0])+" "+b.short)
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+// resetMode puts what the active mode controls back to normal: the options
+// its keys step, unless the mode has a reset of its own.
+func (a *App) resetMode() {
+	m := modes[a.mode]
+	if m.reset != nil {
+		m.reset(a)
+		return
+	}
+	a.pushHistory()
+	def := engine.DefaultSettings()
+	n := 0
+	for _, b := range m.binds {
+		o := engine.FindOption(b.opt)
+		if o == nil || o.Key == "loop" {
+			continue
+		}
+		if want := o.String(&def); o.String(&a.s) != want && o.Set(&a.s, want) == nil {
+			n++
+		}
+	}
+	if n == 0 {
+		a.history = a.history[:len(a.history)-1]
+		a.say(strings.ToLower(m.title)+": nothing to reset", 1500*time.Millisecond)
+		return
+	}
+	a.preset = ""
+	a.changed()
+	a.say(fmt.Sprintf("%s: %d settings back to normal   (u = undo)", strings.ToLower(m.title), n), 2*time.Second)
 }
 
 // --- actions that only the keymap uses ----------------------------------------
@@ -227,6 +554,14 @@ func (a *App) openNext(d int) {
 	if len(a.files) > 1 {
 		a.open(a.fileIdx+d, 0)
 	}
+}
+
+func (a *App) shuffle() {
+	if len(a.files) < 2 {
+		a.say("the playlist has one file — o opens more, / finds some", 2*time.Second)
+		return
+	}
+	a.open(a.fileIdx+1+a.rng.Intn(len(a.files)-1), 0)
 }
 
 func (a *App) stepFrame(d int) {
@@ -241,6 +576,38 @@ func (a *App) stepFrame(d int) {
 	} else {
 		a.seek(a.pos() - 1/a.fps())
 	}
+}
+
+// posterize steps the number of levels per channel. Forwards means a
+// stronger effect: fewer levels, starting from eight; one level would be a
+// blank picture, so two is where it stops and after the last it is off.
+func (a *App) posterize(dir int) {
+	a.touch()
+	n := a.s.Posterize
+	switch {
+	case dir > 0 && n == 0:
+		n = 8
+	case dir > 0:
+		n = max(2, n-1)
+	case n == 0:
+	case n >= 16:
+		n = 0
+	default:
+		n++
+	}
+	a.s.Posterize = n
+	a.changed()
+	o := engine.FindOption("posterize")
+	a.say(o.Label+": "+o.String(&a.s), 1200*time.Millisecond)
+}
+
+// randomGrade picks a color filter at random.
+func (a *App) randomGrade() {
+	a.touch()
+	names := engine.FilterNames()[1:]
+	a.s.Filter, a.s.FilterAmount = names[a.rng.Intn(len(names))], 1
+	a.changed()
+	a.say("filter: "+a.s.Filter+"   (u = undo)", 2*time.Second)
 }
 
 // zoom changes the size of the picture and leaves the interface alone.
