@@ -115,19 +115,8 @@ type Charset struct {
 	Runes []rune
 }
 
-// Charsets lists the built-in ASCII ramps.
-var Charsets = []Charset{
-	{"standard", []rune(" .:-=+*#%@")},
-	{"detailed", []rune(" .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$")},
-	{"minimal", []rune(" .oO@")},
-	{"blocks", []rune(" ░▒▓█")},
-	{"dots", []rune(" ⠁⠃⠇⠏⠟⠿⡿⣿")},
-	{"lines", []rune(" ˙-~=≡#")},
-	{"slashes", []rune(" ./\\|X#")},
-	{"binary", []rune(" 01")},
-	{"katakana", []rune(" ･ｰｧｨｩｱｲｳｴｵｶｷｸｹｻｼｽｾﾀﾁﾂﾃﾄﾅﾆﾇﾈﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ")},
-	{"custom", nil},
-}
+// Charsets lists the built-in glyph ramps (see builtins.go).
+var Charsets = builtinCharsets()
 
 func charsetNames() []string {
 	all := AllCharsets()
@@ -541,6 +530,30 @@ func variant(name string, edit func(*Look)) Preset {
 	return Preset{Name: name, Look: l, Builtin: true}
 }
 
+// withFX is a look that is mostly one of the effect presets.
+func withFX(name, effects string, edit func(*Look)) Preset {
+	return variant(name, func(l *Look) {
+		for _, p := range BuiltinFX {
+			if p.Name == effects {
+				l.FX = p.FX
+			}
+		}
+		if edit != nil {
+			edit(l)
+		}
+	})
+}
+
+// retro is a look built on a fixed palette and an ordered dither.
+func retro(name, palette, dither string, edit func(*Look)) Preset {
+	return variant(name, func(l *Look) {
+		l.Palette, l.Dither = palette, dither
+		if edit != nil {
+			edit(l)
+		}
+	})
+}
+
 // BuiltinPresets are always available and cannot be deleted.
 var BuiltinPresets = []Preset{
 	variant("default", func(l *Look) {}),
@@ -580,5 +593,83 @@ var BuiltinPresets = []Preset{
 		l.Colors = 6
 		l.Dither = "halftone"
 		l.Contrast = 1.3
+	}),
+
+	// Tape, tubes and cameras.
+	withFX("vhs-tape", "vhs-tape", nil),
+	withFX("vhs-worn", "vhs-worn", func(l *Look) { l.Saturation = 1.15 }),
+	withFX("crt-tv", "crt-tv", func(l *Look) { l.Saturation = 1.15 }),
+	withFX("arcade", "crt-arcade", func(l *Look) { l.Mode = ModeSextant; l.Saturation = 1.3; l.Contrast = 1.1 }),
+	withFX("green-terminal", "crt-terminal", func(l *Look) {
+		l.Mode = ModeASCII
+		l.Charset = "dense"
+		l.Dither = "none"
+		l.Background = "black"
+	}),
+	withFX("security-cam", "security-cam", func(l *Look) { l.Contrast = 1.15 }),
+	withFX("night-vision", "night-vision", func(l *Look) { l.Exposure = 0.4 }),
+	withFX("thermal-cam", "thermal-cam", nil),
+	withFX("x-ray", "x-ray", func(l *Look) { l.Mode = ModeSextant }),
+	withFX("anaglyph-3d", "anaglyph-3d", nil),
+	withFX("glitch", "glitch-heavy", nil),
+	withFX("trip", "trip", func(l *Look) { l.Saturation = 1.4 }),
+	withFX("kaleidoscope", "kaleidoscope", func(l *Look) { l.Fit = "fill" }),
+
+	// Film and print.
+	withFX("old-film", "old-film", nil),
+	withFX("silent-movie", "silent-movie", func(l *Look) { l.Contrast = 1.2 }),
+	withFX("noir", "noir", func(l *Look) { l.Contrast = 1.2; l.Shadows = -0.3 }),
+	withFX("polaroid", "polaroid", func(l *Look) { l.Fade = 0.25 }),
+	withFX("lomo", "lomo", func(l *Look) { l.Vibrance = 0.4 }),
+	withFX("blockbuster", "blockbuster", func(l *Look) { l.Contrast = 1.1 }),
+	withFX("dream", "dream", nil),
+	withFX("comic", "pop-comic", func(l *Look) { l.Mode = ModeSextant; l.Saturation = 1.4 }),
+	retro("woodcut", "1bit", "diamond", func(l *Look) { l.Mode = ModeSextant; l.Contrast = 1.35 }),
+	retro("engraving", "paper", "crosshatch", func(l *Look) { l.Mode = ModeSextant; l.Contrast = 1.25 }),
+	retro("e-ink", "e-ink", "floyd-steinberg", func(l *Look) { l.Contrast = 1.1 }),
+	retro("cmyk-print", "cmyk", "cluster8", func(l *Look) { l.Mode = ModeSextant; l.Saturation = 1.2 }),
+	retro("typewriter", "paper", "none", func(l *Look) { l.Mode = ModeASCII; l.Charset = "dense"; l.Color = false }),
+
+	// Old machines.
+	retro("macintosh", "1bit", "atkinson", func(l *Look) { l.Mode = ModeSextant }),
+	retro("obra-dinn", "obra-dinn", "bluenoise", func(l *Look) { l.Mode = ModeSextant; l.Contrast = 1.2 }),
+	retro("teletext", "teletext", "bayer4", func(l *Look) { l.Mode = ModeSextant; l.Saturation = 1.3 }),
+	retro("ega", "ega16", "bayer4", nil),
+	retro("c64", "c64", "bayer4", func(l *Look) { l.Pixelate = 2 }),
+	retro("nes", "nes", "bayer2", func(l *Look) { l.Pixelate = 2; l.Saturation = 1.2 }),
+	retro("pico8", "pico8", "bayer4", func(l *Look) { l.Pixelate = 2 }),
+	retro("pixel-art", "sweetie16", "bayer4", func(l *Look) { l.Pixelate = 2; l.Sharpen = 0.5 }),
+	retro("virtual-boy", "virtualboy", "bayer4", func(l *Look) { l.Scanlines = 0.3 }),
+	retro("pocket-lcd", "gb-pocket", "grid", func(l *Look) { l.Contrast = 1.15; l.MotionBlur = 0.35 }),
+
+	// Color moods.
+	retro("synthwave", "miami", "bluenoise", func(l *Look) { l.Scanlines, l.Glow, l.Saturation = 0.35, 0.4, 1.3 }),
+	retro("fire", "fire", "bluenoise", func(l *Look) { l.Contrast = 1.2 }),
+	retro("deep-sea", "ocean", "waves", func(l *Look) { l.Wave, l.WaveFreq = 0.1, 4 }),
+	retro("aurora", "aurora", "bluenoise", func(l *Look) { l.Glow = 0.5 }),
+
+	// Glyph games.
+	variant("hex-dump", func(l *Look) {
+		l.Mode = ModeASCII
+		l.Charset = "hex"
+		l.Palette = "matrix"
+		l.Dither = "none"
+		l.Background = "black"
+	}),
+	variant("runes", func(l *Look) {
+		l.Mode = ModeASCII
+		l.Charset = "runes"
+		l.Palette = "gold"
+		l.Dither = "none"
+		l.Background = "black"
+	}),
+	variant("dice", func(l *Look) { l.Mode = ModeASCII; l.Charset = "dice"; l.Dither = "none" }),
+	variant("circuit", func(l *Look) {
+		l.Mode = ModeASCII
+		l.Charset = "box"
+		l.Palette = "toxic"
+		l.Dither = "none"
+		l.Edges = "color"
+		l.Background = "black"
 	}),
 }

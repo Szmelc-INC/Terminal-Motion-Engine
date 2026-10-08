@@ -622,7 +622,7 @@ func (f *Finder) drawPreview(a *App, x, y, w, h int) {
 		s.Text(x, y+picH/2, "the preview picture could not be loaded", cDim, cPanel, 0, w)
 	default:
 		g := FitZoom(float64(pic.W)/float64(pic.H), a.s.Look, w, picH, a.aspect(), 1)
-		key := fmt.Sprintf("%s/%d/%d/%s", it.Thumb, g.W, g.H, Summary(a.s.Look))
+		key := fmt.Sprintf("%s/%d/%d/%v", it.Thumb, g.W, g.H, a.s.Look) // redrawn when any setting changes
 		if f.thumbKey != key || len(f.cells) != g.Cols*g.Rows {
 			f.cells = make([]engine.Cell, g.Cols*g.Rows)
 			look := a.s.Look

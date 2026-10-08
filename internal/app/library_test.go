@@ -138,3 +138,107 @@ func TestPrefs(t *testing.T) {
 		t.Errorf("bad ui size kept: %q", q.UI)
 	}
 }
+
+func TestLibraryEffects(t *testing.T) {
+	dir := t.TempDir()
+	l, err := LoadLibrary(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(l.AllFX()); n != len(engine.BuiltinFX) {
+		t.Fatalf("an empty library lists %d effect presets, want the %d built-in ones", n, len(engine.BuiltinFX))
+	}
+	f := engine.DefaultFX()
+	f.VHS, f.Mask, f.Interlace = 0.5, "slot", true
+	if err := l.SaveFX("mine", f); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.SaveFX("a/b", f); err == nil {
+		t.Error("a name with a slash must be refused")
+	}
+	// A user preset may shadow a built-in one; it is then listed once.
+	if err := l.SaveFX("VHS-Tape", f); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(l.AllFX()); n != len(engine.BuiltinFX)+1 {
+		t.Errorf("%d effect presets listed, want %d", n, len(engine.BuiltinFX)+1)
+	}
+	if p, ok := l.FindFX("vhs-tape"); !ok || p.Builtin || p.FX != f {
+		t.Errorf("the user preset must win over the built-in one: %+v", p)
+	}
+
+	l2, err := LoadLibrary(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := l2.FindFX("MINE"); !ok || p.Builtin || p.FX != f {
+		t.Fatalf("reloaded effect preset: %+v %v", p, ok)
+	}
+	if err := l2.Rename("fx", "mine", "yours"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l2.Rename("fx", "crt-tv", "x"); err == nil {
+		t.Error("renaming a built-in effect preset must fail")
+	}
+	if err := l2.Rename("fx", "yours", "vhs-tape"); err == nil {
+		t.Error("renaming onto an existing name must fail")
+	}
+	if err := l2.Delete("fx", "yours"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l2.Delete("fx", "yours"); err == nil {
+		t.Error("deleting twice must fail")
+	}
+	if err := l2.Delete("fx", "crt-tv"); err == nil {
+		t.Error("deleting a built-in effect preset must fail")
+	}
+
+	// A preset written before a setting existed gets that setting's default.
+	os.WriteFile(filepath.Join(dir, "library.json"), []byte(`{"effects":[{"name":"old","fx":{"vhs":0.4}}]}`), 0o644)
+	l3, err := LoadLibrary(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := engine.DefaultFX()
+	want.VHS = 0.4
+	if p, ok := l3.FindFX("old"); !ok || p.FX != want {
+		t.Errorf("old effect preset decoded to %+v", p.FX)
+	}
+}
+
+func TestManagerFilter(t *testing.T) {
+	p := &managerPage{name: "Things", items: func(*App) []mItem {
+		return []mItem{
+			{name: "gameboy", tag: "handheld", info: "4 colors"},
+			{name: "pico8", tag: "pixelart", info: "16 colors"},
+			{name: "dusk", user: true, info: "4 colors"},
+		}
+	}}
+	names := func() string {
+		out := ""
+		for _, it := range p.list(nil) {
+			out += it.name + " "
+		}
+		return out
+	}
+	for filter, want := range map[string]string{
+		"":           "gameboy pico8 dusk ",
+		"PICO":       "pico8 ",
+		"handheld":   "gameboy ",
+		"user":       "dusk ",
+		"4 colors":   "gameboy dusk ",
+		"4 game":     "gameboy ",
+		"no-such":    "",
+		"  pixel   ": "pico8 ",
+	} {
+		if p.filter = filter; names() != want {
+			t.Errorf("filter %q lists %q, want %q", filter, names(), want)
+		}
+	}
+	// Selecting something the filter hides drops the filter.
+	p.filter = "pico"
+	p.selectName(nil, "dusk")
+	if p.filter != "" || p.sel != 2 {
+		t.Errorf("selectName under a filter: filter %q, selection %d", p.filter, p.sel)
+	}
+}

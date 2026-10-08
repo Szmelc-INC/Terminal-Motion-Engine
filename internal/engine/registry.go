@@ -310,6 +310,9 @@ var GlyphSets = []struct{ Name, Chars string }{
 	{"katakana", " ･ｰｧｨｩｱｲｳｴｵｶｷｸｹｻｼｽｾﾀﾁﾂﾃﾄﾅﾆﾇﾈﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ"},
 	{"runes", " ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛇᛈᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ"},
 	{"cards", " ♠♡♢♣♤♥♦♧♩♪♫♬"},
+	{"games", " ⚀⚁⚂⚃⚄⚅♙♘♗♖♕♔♟♞♝♜♛♚"},
+	{"greek", " ·ιτγνλσπαεδβθψωΞΣΦΩΨ"},
+	{"cyrillic", " ·гтсукеаодлбяфюжщш"},
 }
 
 // GlyphSetNames lists the generator's pools.

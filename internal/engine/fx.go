@@ -62,7 +62,7 @@ func (f *FX) Active() bool {
 	return f.spatial() || f.Blur > 0 || f.Sharpen > 0 || f.Glow > 0 || f.Pixelate > 1 || f.Split != 0 ||
 		(f.Filter != "none" && f.Filter != "" && f.FilterAmount > 0) || f.Posterize > 1 || f.Solarize > 0 ||
 		f.VHS > 0 || f.Bleed > 0 || f.Grain > 0 || f.Scanlines > 0 || (f.Mask != "off" && f.Mask != "") ||
-		f.Interlace || f.Vignette > 0 || f.MotionBlur > 0
+		f.Interlace || f.Vignette > 0 || f.MotionBlur > 0 || f.HueCycle != 0
 }
 
 // spatial reports whether pixels move (mirror, curvature, row shifts).
@@ -80,10 +80,12 @@ func FXSummary(f FX) string {
 		}
 	}
 	add(f.Filter != "none" && f.Filter != "" && f.FilterAmount > 0, f.Filter)
-	add(f.VHS > 0 || f.Tracking > 0 || f.Bleed > 0, "vhs")
+	add(f.VHS > 0 || f.Tracking > 0, "vhs")
+	add(f.Bleed > 0 && f.VHS == 0, "bleed")
 	add(f.Curvature > 0 || (f.Mask != "off" && f.Mask != ""), "crt")
 	add(f.Scanlines > 0, "scanlines")
-	add(f.Glitch > 0 || f.Jitter > 0, "glitch")
+	add(f.Glitch > 0, "glitch")
+	add(f.Jitter > 0 && f.Glitch == 0, "jitter")
 	splitName := "rgb split"
 	switch f.SplitMode {
 	case "anaglyph":
@@ -104,6 +106,7 @@ func FXSummary(f FX) string {
 	add(f.Grain > 0, "grain")
 	add(f.Vignette > 0, "vignette")
 	add(f.Interlace, "interlace")
+	add(f.HueCycle != 0, "hue cycle")
 	if len(p) == 0 {
 		return "none"
 	}

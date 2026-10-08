@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/engine"
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/tty"
 )
 
@@ -141,14 +142,19 @@ func init() {
 		{"r", "RANDOMIZE the whole look", func(a *App) { a.randomize(false) }},
 		{"R", "randomize the palette only", func(a *App) { a.randomize(true) }},
 		{"u U", "undo the last change", func(a *App) { a.undo() }},
-		{"tab f2 s S", "picture settings", func(a *App) { a.openPanel("picture", -1) }},
+		{"tab f2 s S", "picture: render mode, colors, dither", func(a *App) { a.openPanel("picture", -1) }},
+		{"f3", "adjust & filters: light, color, grade", func(a *App) { a.openPanel("adjust", -1) }},
+		{"f4", "effects: VHS, CRT, glitch, 3D + presets", func(a *App) { a.openPanel("effects", -1) }},
 		{"f5", "sound: tone, equaliser, dynamics, space", func(a *App) { a.openPanel("sound", -1) }},
-		{"f6", "sound effects: pitch, modulation, lo-fi, synth", func(a *App) { a.openPanel("soundfx", -1) }},
-		{"f7", "presets: looks and sounds", func(a *App) { a.openPanel("presets", -1) }},
-		{"f8", "palettes & symbols: managers, generators, editor", func(a *App) { a.openPanel("palettes", -1) }},
+		{"f6", "sound effects: pitch, lo-fi, synth", func(a *App) { a.openPanel("soundfx", -1) }},
+		{"f7", "presets: looks, sounds and effects", func(a *App) { a.openPanel("presets", -1) }},
+		{"f8", "palettes & symbols: manage, generate", func(a *App) { a.openPanel("palettes", -1) }},
 		{"f12", "preferences & themes", func(a *App) { a.openPanel("prefs", -1) }},
 		{"p P", "next / previous preset", nil},
 		{"ctrl+s", "save the look as a preset", func(a *App) { a.savePresetPrompt() }},
+		{"t T", "next / previous effect preset", nil},
+		{"w", "random effects", func(a *App) { a.randomFX() }},
+		{"W", "effects off", func(a *App) { a.setFX(engine.BuiltinFX[0]) }},
 
 		{"v V", "cycle mode", nil},
 		{"d D", "cycle dither", nil},
@@ -168,7 +174,7 @@ func init() {
 		}},
 		{"g", "performance stats", func(a *App) { a.stats = !a.stats }},
 		{"o", "open a file", func(a *App) { a.openBrowser() }},
-		{"f9 /", "find media on the web: search, preview, download", func(a *App) { a.openFinder("") }},
+		{"f9 /", "find media on the web: search, download", func(a *App) { a.openFinder("") }},
 		{"n N", "next / previous file", nil},
 		{"f1 ?", "this help", func(a *App) { a.help, a.helpTop = true, 0 }},
 		{"esc", "close the menu", func(a *App) { a.menu = nil }},
@@ -176,6 +182,7 @@ func init() {
 	}
 	g.pair("]", "[", nudger("speed", 1), nudger("speed", -1))
 	g.pair("p", "P", func(a *App) { a.cyclePreset(1) }, func(a *App) { a.cyclePreset(-1) })
+	g.pair("t", "T", func(a *App) { a.cycleFX(1) }, func(a *App) { a.cycleFX(-1) })
 	g.pair("v", "V", nudger("mode", 1), nudger("mode", -1))
 	g.pair("d", "D", nudger("dither", 1), nudger("dither", -1))
 	g.pair("c", "C", nudger("palette", 1), nudger("palette", -1))

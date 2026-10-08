@@ -162,12 +162,18 @@ func (a *App) drawHUD() {
 		title += fmt.Sprintf("  ↓ %d downloading", n)
 	}
 	x += s.Text(x, 0, title, cFg, cBar, 0, W-x-1)
-	right := Summary(a.s.Look)
+	// The look on the right, with as much detail as fits.
+	base, lead := Summary(a.s.Look), ""
 	if a.preset != "" {
-		right = "◆ " + a.preset + "  " + right
+		lead = "◆ " + a.preset + "  "
 	}
-	if rw := len([]rune(right)); x+rw+3 < W {
-		s.Text(W-rw-1, 0, right, cDim, cBar, 0, -1)
+	plain := a.s.Look
+	plain.FX = engine.DefaultFX()
+	for _, right := range []string{lead + base, lead + Summary(plain), Summary(plain)} {
+		if rw := len([]rune(right)); x+rw+3 < W {
+			s.Text(W-rw-1, 0, right, cDim, cBar, 0, -1)
+			break
+		}
 	}
 	a.on(0, 0, W, 1, func(tty.Event, int, int) {})
 

@@ -177,22 +177,28 @@ func (m *Menu) key(a *App, ev tty.Event) bool {
 // The pages and panels are wired up in init: they refer to each other
 // through the actions they run.
 var (
-	pgPresets, pgPalettes, pgCharsets, pgThemes, pgSounds *managerPage
-	pgEditor                                              = &paletteEditPage{}
-	pgPrefs                                               *fieldsPage
-	panels                                                []*panel
+	pgPresets, pgPalettes, pgCharsets, pgThemes, pgSounds, pgFX *managerPage
+	pgEditor                                                    = &paletteEditPage{}
+	pgPrefs                                                     *fieldsPage
+	panels                                                      []*panel
 )
 
 func init() {
 	pgPresets, pgPalettes = newPresetManager(), newPaletteManager()
 	pgCharsets, pgThemes = newCharsetManager(), newThemeManager()
-	pgSounds = newSoundManager()
+	pgSounds, pgFX = newSoundManager(), newFXManager()
 	audio := func(group string) page { return &optionsPage{group: "Audio: " + group, name: group} }
 	pgPrefs = &fieldsPage{name: "Preferences", fields: prefFields}
 	panels = []*panel{
-		{id: "picture", title: "Picture", pages: []page{
+		{id: "picture", title: "Picture — render, color, dither", pages: []page{
 			&optionsPage{group: "Render"}, &optionsPage{group: "Color"}, &optionsPage{group: "Dither"},
-			&optionsPage{group: "Adjust"}, &optionsPage{group: "Playback"},
+			&optionsPage{group: "Playback"},
+		}},
+		{id: "adjust", title: "Adjust & filters — light, color, grade, detail", pages: []page{
+			&optionsPage{group: "Adjust"}, &optionsPage{group: "Filter"},
+		}},
+		{id: "effects", title: "Effects — tape, tube, glitch, time", pages: []page{
+			pgFX, &optionsPage{group: "Effects"}, &optionsPage{group: "Filter", name: "Filter & detail"},
 		}},
 		{id: "sound", title: "Sound — tone, dynamics, space", pages: []page{
 			audio("Tone"), audio("EQ"), audio("Dynamics"), audio("Space"),
@@ -200,7 +206,7 @@ func init() {
 		{id: "soundfx", title: "Sound effects — motion, lo-fi, synth", pages: []page{
 			audio("Motion"), audio("Lo-fi"), audio("Synth"),
 		}},
-		{id: "presets", title: "Presets", pages: []page{pgPresets, pgSounds}},
+		{id: "presets", title: "Presets", pages: []page{pgPresets, pgSounds, pgFX}},
 		{id: "palettes", title: "Palettes & symbols", pages: []page{pgPalettes, pgEditor, pgCharsets}},
 		{id: "prefs", title: "Preferences & themes", pages: []page{pgPrefs, pgThemes}},
 	}
@@ -244,8 +250,17 @@ func (a *App) openPanel(id string, tab int) {
 	a.menu = m
 }
 
-// showPage opens the panel that holds a page, on that page.
+// showPage opens the panel that holds a page, on that page. A page that is
+// in the open panel is shown there.
 func (a *App) showPage(pg page) {
+	if a.menu != nil {
+		for i, q := range a.menu.panel.pages {
+			if q == pg {
+				a.menu.setTab(i)
+				return
+			}
+		}
+	}
 	for _, p := range panels {
 		for i, q := range p.pages {
 			if q == pg {

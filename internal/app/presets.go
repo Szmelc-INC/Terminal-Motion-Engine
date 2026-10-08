@@ -193,5 +193,9 @@ func Summary(l engine.Look) string {
 	if l.Mode == engine.ModeASCII {
 		mode += "/" + l.Charset
 	}
-	return mode + " · " + pal + " · " + l.Dither
+	out := mode + " · " + pal + " · " + l.Dither
+	if l.FX.Active() {
+		out += " · ✦ " + engine.FXSummary(l.FX)
+	}
+	return out
 }

@@ -61,7 +61,7 @@ func newPresetManager() *managerPage {
 		{'n', "New", &cAccent, func(a *App, it mItem, ok bool) {
 			a.ask("New preset from the current look", "name", "", func(v string) { a.savePreset(v, true) })
 		}},
-		{'s', "Save over", nil, func(a *App, it mItem, ok bool) {
+		{'s', "Update", nil, func(a *App, it mItem, ok bool) {
 			if a.userOnly(it, ok, "save") {
 				a.confirm = &Confirm{msg: fmt.Sprintf("Overwrite %q with the current look?", it.name),
 					yes: func() { a.savePreset(it.name, false) }}
@@ -246,8 +246,13 @@ func newPaletteManager() *managerPage {
 	p.items = func(a *App) []mItem {
 		var out []mItem
 		for _, np := range engine.AllPalettes() {
-			out = append(out, mItem{name: np.Name, user: !engine.IsBuiltinPalette(np.Name), swatch: np.Colors,
-				active: a.s.Color && a.s.Palette == np.Name})
+			user := !engine.IsBuiltinPalette(np.Name)
+			it := mItem{name: np.Name, user: user, swatch: np.Colors, active: a.s.Color && a.s.Palette == np.Name,
+				info: fmt.Sprintf("%d colors", len(np.Colors))}
+			if !user {
+				it.tag = engine.PaletteTag(np.Name)
+			}
+			out = append(out, it)
 		}
 		return out
 	}
@@ -1021,7 +1026,7 @@ func newSoundManager() *managerPage {
 		}},
 		{'n', "New", &cAccent, func(a *App, it mItem, ok bool) { a.saveSoundAs(a.s.Sound, "") }},
 		{'g', "⚄ Random", &cYellow, func(a *App, it mItem, ok bool) { a.randomSound() }},
-		{'s', "Save over", nil, func(a *App, it mItem, ok bool) {
+		{'s', "Update", nil, func(a *App, it mItem, ok bool) {
 			if a.userOnly(it, ok, "save") {
 				a.confirm = &Confirm{msg: fmt.Sprintf("Overwrite %q with the current sound?", it.name), yes: func() {
 					if !a.fail(a.lib.SaveSound(it.name, a.s.Sound)) {
@@ -1061,6 +1066,113 @@ func newSoundManager() *managerPage {
 			}}
 		}},
 		{'0', "Clean", nil, func(a *App, it mItem, ok bool) { a.setSound(engine.BuiltinSounds[0]) }},
+	}
+	return p
+}
+
+// --- effect presets ----------------------------------------------------------
+
+// setFX puts a set of effects on top of the current look.
+func (a *App) setFX(p engine.FXPreset) {
+	a.touch()
+	a.s.FX = p.FX
+	a.changed()
+	a.say("effects: "+p.Name+" — "+engine.FXSummary(p.FX), 2*time.Second)
+}
+
+// randomFX rolls a few effects at random.
+func (a *App) randomFX() {
+	a.touch()
+	a.s.FX = engine.RandomFX(a.rng)
+	a.changed()
+	a.say("random effects → "+engine.FXSummary(a.s.FX)+"   (u = undo)", 2500*time.Millisecond)
+}
+
+func (a *App) cycleFX(dir int) {
+	all := a.lib.AllFX()
+	idx := -1
+	for i, p := range all {
+		if p.FX == a.s.FX {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 && dir < 0 {
+		idx = 0
+	}
+	a.setFX(all[((idx+dir)%len(all)+len(all))%len(all)])
+}
+
+func (a *App) saveFXAs(f engine.FX, suggest string) {
+	a.ask("Save the effects as", "name", suggest, func(v string) {
+		for _, b := range engine.BuiltinFX {
+			if strings.EqualFold(b.Name, v) {
+				a.say(v+" is a built-in effect preset, pick another name", 3*time.Second)
+				return
+			}
+		}
+		if a.fail(a.lib.SaveFX(v, f)) {
+			return
+		}
+		pgFX.selectName(a, v)
+		a.ok("saved effects " + v)
+	})
+}
+
+func newFXManager() *managerPage {
+	p := &managerPage{name: "Effect presets"}
+	p.items = func(a *App) []mItem {
+		var out []mItem
+		for _, f := range a.lib.AllFX() {
+			out = append(out, mItem{name: f.Name, user: !f.Builtin, info: engine.FXSummary(f.FX), active: f.FX == a.s.FX})
+		}
+		return out
+	}
+	find := func(a *App, it mItem) engine.FXPreset { f, _ := a.lib.FindFX(it.name); return f }
+	p.actions = []mAction{
+		{'l', "Use", &cGreen, func(a *App, it mItem, ok bool) {
+			if ok {
+				a.setFX(find(a, it))
+			}
+		}},
+		{'n', "New", &cAccent, func(a *App, it mItem, ok bool) { a.saveFXAs(a.s.FX, "") }},
+		{'g', "⚄ Random", &cYellow, func(a *App, it mItem, ok bool) { a.randomFX() }},
+		{'s', "Update", nil, func(a *App, it mItem, ok bool) {
+			if a.userOnly(it, ok, "save") {
+				a.confirm = &Confirm{msg: fmt.Sprintf("Overwrite %q with the current effects?", it.name), yes: func() {
+					if !a.fail(a.lib.SaveFX(it.name, a.s.FX)) {
+						a.ok("saved " + it.name)
+					}
+				}}
+			}
+		}},
+		{'c', "Copy", nil, func(a *App, it mItem, ok bool) {
+			if ok {
+				a.saveFXAs(find(a, it).FX, it.name+"-copy")
+			}
+		}},
+		{'r', "Rename", nil, func(a *App, it mItem, ok bool) {
+			if !a.userOnly(it, ok, "make") {
+				return
+			}
+			a.ask("Rename effect preset", "new name", it.name, func(v string) {
+				if !a.fail(a.lib.Rename("fx", it.name, v)) {
+					p.selectName(a, v)
+					a.ok("renamed to " + v)
+				}
+			})
+		}},
+		{'d', "Delete", &cRed, func(a *App, it mItem, ok bool) {
+			if !a.userOnly(it, ok, "make") {
+				return
+			}
+			a.confirm = &Confirm{msg: fmt.Sprintf("Delete effect preset %q?", it.name), yes: func() {
+				if !a.fail(a.lib.Delete("fx", it.name)) {
+					a.ok("deleted " + it.name)
+				}
+			}}
+		}},
+		{'0', "Off", nil, func(a *App, it mItem, ok bool) { a.setFX(engine.BuiltinFX[0]) }},
 	}
 	return p
 }

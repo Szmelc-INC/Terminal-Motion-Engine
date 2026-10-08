@@ -24,14 +24,75 @@ type CharsetEntry struct {
 }
 
 // Library holds everything the user made besides presets: color palettes,
-// glyph ramps and interface themes. It lives in library.json next to the
-// preset file.
+// glyph ramps, interface themes, sound presets and effect presets. It lives
+// in library.json next to the preset file.
 type Library struct {
 	Path     string         `json:"-"`
 	Palettes []PaletteEntry `json:"palettes"`
 	Charsets []CharsetEntry `json:"charsets"`
 	Themes   []Theme        `json:"themes"`
 	Sounds   []SoundEntry   `json:"sounds"`
+	FX       []FXEntry      `json:"effects"`
+}
+
+// FXEntry is a user effect preset.
+type FXEntry struct {
+	Name string    `json:"name"`
+	FX   engine.FX `json:"fx"`
+}
+
+// UnmarshalJSON decodes over the defaults, like SoundEntry.
+func (e *FXEntry) UnmarshalJSON(b []byte) error {
+	type plain FXEntry
+	p := plain{FX: engine.DefaultFX()}
+	err := json.Unmarshal(b, &p)
+	*e = FXEntry(p)
+	return err
+}
+
+// AllFX lists user effect presets first, then the built-in ones they do
+// not shadow.
+func (l *Library) AllFX() []engine.FXPreset {
+	var out []engine.FXPreset
+	for _, f := range l.FX {
+		out = append(out, engine.FXPreset{Name: f.Name, FX: f.FX})
+	}
+	for _, b := range engine.BuiltinFX {
+		dup := false
+		for _, u := range l.FX {
+			dup = dup || strings.EqualFold(u.Name, b.Name)
+		}
+		if !dup {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// FindFX looks an effect preset up by name.
+func (l *Library) FindFX(name string) (engine.FXPreset, bool) {
+	for _, f := range l.AllFX() {
+		if strings.EqualFold(f.Name, name) {
+			return f, true
+		}
+	}
+	return engine.FXPreset{}, false
+}
+
+// SaveFX creates or replaces a user effect preset.
+func (l *Library) SaveFX(name string, f engine.FX) error {
+	name, err := cleanName(name)
+	if err != nil {
+		return err
+	}
+	for i := range l.FX {
+		if strings.EqualFold(l.FX[i].Name, name) {
+			l.FX[i].FX = f
+			return l.save()
+		}
+	}
+	l.FX = append(l.FX, FXEntry{Name: name, FX: f})
+	return l.save()
 }
 
 // SoundEntry is a user sound preset.
@@ -249,7 +310,7 @@ func (l *Library) SaveTheme(t Theme) error {
 }
 
 // Delete removes a user item of the given kind ("palette", "charset",
-// "theme").
+// "theme", "sound", "fx").
 func (l *Library) Delete(kind, name string) error {
 	found := false
 	switch kind {
@@ -281,9 +342,20 @@ func (l *Library) Delete(kind, name string) error {
 				break
 			}
 		}
+	case "fx":
+		for i, p := range l.FX {
+			if strings.EqualFold(p.Name, name) {
+				l.FX, found = append(l.FX[:i], l.FX[i+1:]...), true
+				break
+			}
+		}
+	}
+	what := kind
+	if kind == "fx" {
+		what = "effect preset"
 	}
 	if !found {
-		return fmt.Errorf("no user %s named %q (built-in ones cannot be deleted)", kind, name)
+		return fmt.Errorf("no user %s named %q (built-in ones cannot be deleted)", what, name)
 	}
 	return l.save()
 }
@@ -319,6 +391,10 @@ func (l *Library) Rename(kind, old, name string) error {
 	case "sound":
 		for i := range l.Sounds {
 			check(&l.Sounds[i].Name)
+		}
+	case "fx":
+		for i := range l.FX {
+			check(&l.FX[i].Name)
 		}
 	}
 	if target == nil {

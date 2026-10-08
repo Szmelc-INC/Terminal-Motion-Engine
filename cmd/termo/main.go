@@ -55,6 +55,7 @@ var extras = map[string]extra{
 	"presets":    {true, "path to the preset file"},
 	"sort":       {false, "charsets add: order the characters from empty to full"},
 	"sound":      {true, "start with a sound preset (termo sounds lists them)"},
+	"fx":         {true, "start with an effect preset on top of the look (termo effects lists them)"},
 	"site":       {true, "find/search/get: youtube, giphy, tenor, pinterest, archive, wikimedia, url"},
 	"kind":       {true, "search filter: any, video, gif, image"},
 	"length":     {true, "search filter: any, short, medium, long"},
@@ -178,6 +179,13 @@ func (c *cli) settings(store *app.Store) (engine.Settings, string, error) {
 		engine.Randomize(&s.Look, rand.New(rand.NewSource(seed)))
 		preset = ""
 	}
+	if name, ok := c.get("fx"); ok && library != nil {
+		fp, found := library.FindFX(name)
+		if !found {
+			return s, "", fmt.Errorf("no effect preset named %q (termo effects lists them)", name)
+		}
+		s.FX = fp.FX
+	}
 	if name, ok := c.get("sound"); ok && library != nil {
 		sp, found := library.FindSound(name)
 		if !found {
@@ -275,7 +283,7 @@ func run(argv []string) error {
 	if len(c.args) > 0 {
 		switch c.args[0] {
 		case "play", "snap", "bench", "info", "presets", "palettes", "charsets", "themes", "options",
-			"find", "search", "get", "sounds":
+			"find", "search", "get", "sounds", "effects":
 			// A file that happens to share a command's name still plays.
 			if _, err := os.Stat(c.args[0]); err != nil || c.args[0] == "play" {
 				cmd, c.args = c.args[0], c.args[1:]
@@ -299,6 +307,16 @@ func run(argv []string) error {
 			}
 			fmt.Printf("  %-16s %-9s %s\n", s.Name, tag, engine.SoundSummary(s.Sound))
 		}
+		return nil
+	case "effects":
+		for _, f := range lib.AllFX() {
+			tag := "user"
+			if f.Builtin {
+				tag = "built-in"
+			}
+			fmt.Printf("  %-16s %-9s %s\n", f.Name, tag, engine.FXSummary(f.FX))
+		}
+		fmt.Println("\nFilters (--filter NAME):", strings.Join(engine.FilterNames()[1:], ", "))
 		return nil
 	case "search", "get":
 		prefs, err := app.LoadPrefs(filepath.Dir(store.Path))
@@ -635,7 +653,11 @@ func cmdPalettes(c *cli, lib *app.Library) error {
 		}
 		return nil
 	}
-	return listPalettes(c)
+	only := ""
+	if len(c.args) > 1 {
+		only = strings.ToLower(c.args[1])
+	}
+	return listPalettes(c, only)
 }
 
 // cmdCharsets lists the ASCII ramps, or manages the user's own:
@@ -706,7 +728,9 @@ func cmdThemes(c *cli, lib *app.Library) error {
 	return nil
 }
 
-func listPalettes(c *cli) error {
+// listPalettes prints the palettes by family. only narrows the list to one
+// family or to the names that contain it.
+func listPalettes(c *cli, only string) error {
 	depth, err := c.depth()
 	if err != nil {
 		return err
@@ -714,7 +738,7 @@ func listPalettes(c *cli) error {
 	show := term.IsTerminal(int(os.Stdout.Fd()))
 	line := func(name string, colors []engine.RGB) {
 		if show && len(colors) <= 32 {
-			fmt.Printf("  %-12s %3d  %s\n", name, len(colors), swatches(colors, depth))
+			fmt.Printf("  %-14s %3d  %s\n", name, len(colors), swatches(colors, depth))
 			return
 		}
 		var hex []string
@@ -725,12 +749,40 @@ func listPalettes(c *cli) error {
 			}
 			hex = append(hex, col.Hex())
 		}
-		fmt.Printf("  %-12s %3d  %s\n", name, len(colors), strings.Join(hex, " "))
+		fmt.Printf("  %-14s %3d  %s\n", name, len(colors), strings.Join(hex, " "))
 	}
-	fmt.Println("Named palettes (--palette NAME):")
-	for _, p := range engine.AllPalettes() {
-		line(p.Name, p.Colors)
+	all := engine.AllPalettes()
+	families := append([][2]string{{"", "yours"}}, engine.PaletteFamilies()...)
+	shown := 0
+	for _, f := range families {
+		head := false
+		for _, p := range all {
+			tag := ""
+			if engine.IsBuiltinPalette(p.Name) {
+				tag = engine.PaletteTag(p.Name)
+			}
+			if tag != f[0] || (only != "" && only != tag && !strings.Contains(strings.ToLower(p.Name), only)) {
+				continue
+			}
+			if !head {
+				title := f[0]
+				if title == "" {
+					title = "user"
+				}
+				fmt.Printf("%s — %s:\n", title, f[1])
+				head = true
+			}
+			line(p.Name, p.Colors)
+			shown++
+		}
 	}
+	if only != "" {
+		if shown == 0 {
+			return fmt.Errorf("no palette or palette family matches %q", only)
+		}
+		return nil
+	}
+	fmt.Printf("\n%d named palettes (--palette NAME; termo palettes list FAMILY shows one family).\n", shown)
 	fmt.Println("\nGenerated palettes:")
 	fmt.Println("  truecolor         no palette, full 24-bit color")
 	fmt.Println("  harmony           color-theory palette: --scheme, --hue, --chroma, --lmin, --lmax, --colors")
@@ -864,10 +916,11 @@ Usage:
   termo get [--as FORMAT] <link | words…>   download a link or the best match (mp4, webm, gif, mp3, wav…)
   termo <link>                      play a YouTube / web link without saving it
   termo presets [list|show|save|edit|rename|rm|path] [name]
-  termo palettes [add|import|rm|export]   list palettes, or manage your own
+  termo palettes [list FAMILY|add|import|rm|export]   list palettes, or manage your own
   termo charsets [add|gen|rm]       list ASCII ramps, or manage your own
   termo themes                      list interface themes
   termo sounds                      list sound presets (--sound NAME starts with one)
+  termo effects                     list effect presets and filters (--fx NAME, --filter NAME)
   termo options                     list every look option with its values
 
 Common options (termo options lists all of them):
@@ -877,6 +930,8 @@ Common options (termo options lists all of them):
       --scheme NAME      color-theory scheme for --palette harmony
   -d, --dither NAME      none | bayer4 | bluenoise | halftone | floyd-steinberg | atkinson | …
   -P, --preset NAME      start from a preset
+      --fx NAME          put an effect preset on top: vhs-tape | crt-tv | anaglyph-3d | glitch-heavy | …
+      --filter NAME      color grade: mono | sepia | noir | xpro | polaroid | thermal | night-vision | …
   -r, --random           start with a randomized look (--seed N to repeat it)
   -f, --fps N            cap the frame rate (default: source rate)
   -s, --start SEC        start position
