@@ -252,10 +252,11 @@
 > #   make bench           # render benchmarks
 > #   make clean           # remove ./termo
 > ```
-> For a system-wide install, set `PREFIX`:
+> For a system-wide install, build as your user and copy the binary as root:
 > ```sh
-> sudo make install PREFIX=/usr/local
+> make && sudo install -m 0755 termo /usr/local/bin/termo
 > ```
+> On macOS, `make install` does not work with the BSD `install` command. Use the line above or `go install`.
 > Or manually:
 > ```sh
 > go build -trimpath -ldflags "-s -w" -o termo ./cmd/termo
