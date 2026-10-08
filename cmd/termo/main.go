@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -52,6 +53,7 @@ var extras = map[string]extra{
 	"frames":     {true, "bench: number of frames to measure"},
 	"all":        {false, "bench: measure every mode and dither"},
 	"presets":    {true, "path to the preset file"},
+	"sort":       {false, "charsets add: order the characters from empty to full"},
 	"help":       {false, "show help"},
 	"version":    {false, "show version"},
 }
@@ -243,10 +245,16 @@ func run(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot load presets: %v", err)
 	}
+	// The library registers user palettes and charsets with the engine, so
+	// every command (and every flag that names one) can use them.
+	lib, err := app.LoadLibrary(filepath.Dir(store.Path))
+	if err != nil {
+		return fmt.Errorf("cannot load the library: %v", err)
+	}
 	cmd := ""
 	if len(c.args) > 0 {
 		switch c.args[0] {
-		case "play", "snap", "bench", "info", "presets", "palettes", "options":
+		case "play", "snap", "bench", "info", "presets", "palettes", "charsets", "themes", "options":
 			// A file that happens to share a command's name still plays.
 			if _, err := os.Stat(c.args[0]); err != nil || c.args[0] == "play" {
 				cmd, c.args = c.args[0], c.args[1:]
@@ -257,7 +265,11 @@ func run(argv []string) error {
 	case "presets":
 		return cmdPresets(c, store)
 	case "palettes":
-		return cmdPalettes(c)
+		return cmdPalettes(c, lib)
+	case "charsets":
+		return cmdCharsets(c, lib)
+	case "themes":
+		return cmdThemes(c, lib)
 	case "options":
 		return cmdOptions()
 	}
@@ -272,10 +284,10 @@ func run(argv []string) error {
 	case "bench":
 		return cmdBench(c, store)
 	}
-	return cmdPlay(c, store)
+	return cmdPlay(c, store, lib)
 }
 
-func cmdPlay(c *cli, store *app.Store) error {
+func cmdPlay(c *cli, store *app.Store, lib *app.Library) error {
 	s, preset, err := c.settings(store)
 	if err != nil {
 		return err
@@ -299,7 +311,14 @@ func cmdPlay(c *cli, store *app.Store) error {
 			return fmt.Errorf("cannot open %s: no such file or folder", f)
 		}
 	}
-	ui := 1
+	prefs, err := app.LoadPrefs(filepath.Dir(store.Path))
+	if err != nil {
+		return fmt.Errorf("cannot load the preferences: %v", err)
+	}
+	if hud == "" {
+		hud = prefs.HUD
+	}
+	ui := app.UIScale(prefs.UI)
 	if v, ok := c.get("ui"); ok {
 		if ui = app.UIScale(v); ui < 0 {
 			return fmt.Errorf("--ui: %q is not one of compact, normal, large, huge", v)
@@ -307,9 +326,9 @@ func cmdPlay(c *cli, store *app.Store) error {
 	}
 	sink, _ := c.get("audio-sink")
 	return app.Run(app.Config{
-		UIScale: ui,
-		Files:   c.args, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
-		HWAccel: c.has("hwaccel"), HUD: hud, Depth: depth, Start: start, Stats: c.has("stats"),
+		UIScale: ui, Lib: lib, Prefs: prefs,
+		Files: c.args, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
+		HWAccel: c.has("hwaccel"), HUD: hud, Depth: depth, Start: start, Stats: c.has("stats") || prefs.Stats,
 		Store: store, Preset: preset,
 	})
 }
@@ -498,7 +517,134 @@ func swatches(colors []engine.RGB, depth int) string {
 	return strings.TrimRight(string(tty.Dump(cells, len(cells), 1, depth)), "\n")
 }
 
-func cmdPalettes(c *cli) error {
+// cmdPalettes lists the palettes, or manages the user's own:
+// add NAME COLORS · import SOURCE [NAME] · rm NAME · export NAME
+func cmdPalettes(c *cli, lib *app.Library) error {
+	if len(c.args) > 0 && c.args[0] != "list" && c.args[0] != "ls" {
+		arg := func(i int) string {
+			if len(c.args) > i {
+				return c.args[i]
+			}
+			return ""
+		}
+		switch sub := c.args[0]; sub {
+		case "add", "import":
+			name, src := arg(1), arg(2)
+			if sub == "import" {
+				src, name = arg(1), arg(2)
+				if name == "" {
+					name = strings.TrimSuffix(filepath.Base(strings.TrimPrefix(src, "lospec:")), filepath.Ext(src))
+				}
+			}
+			if name == "" || src == "" {
+				return errors.New("usage: termo palettes add NAME '#hex,#hex,…'  |  termo palettes import FILE|URL|lospec:NAME [NAME]")
+			}
+			text := src
+			if sub == "import" {
+				t, err := app.FetchText(src)
+				if err != nil {
+					return err
+				}
+				text = t
+			}
+			cols, err := engine.ParsePaletteText(text)
+			if err != nil {
+				return err
+			}
+			if err := lib.SavePalette(name, cols); err != nil {
+				return err
+			}
+			fmt.Printf("saved palette %s (%d colors)\n", name, len(cols))
+		case "rm", "delete", "del":
+			if err := lib.Delete("palette", arg(1)); err != nil {
+				return err
+			}
+			fmt.Println("deleted", arg(1))
+		case "export", "show":
+			cols, ok := engine.FindPalette(arg(1))
+			if !ok {
+				return fmt.Errorf("no palette named %q", arg(1))
+			}
+			for _, col := range cols {
+				fmt.Println(strings.TrimPrefix(col.Hex(), "#"))
+			}
+		default:
+			return fmt.Errorf("unknown palettes command %q (list, add, import, rm, export)", sub)
+		}
+		return nil
+	}
+	return listPalettes(c)
+}
+
+// cmdCharsets lists the ASCII ramps, or manages the user's own:
+// add NAME CHARS · gen NAME POOL [COUNT] · rm NAME
+func cmdCharsets(c *cli, lib *app.Library) error {
+	arg := func(i int) string {
+		if len(c.args) > i {
+			return c.args[i]
+		}
+		return ""
+	}
+	switch sub := arg(0); sub {
+	case "", "list", "ls":
+		for _, cs := range engine.AllCharsets() {
+			if cs.Name != "custom" {
+				fmt.Printf("  %-14s %3d  |%s|\n", cs.Name, len(cs.Runes), string(cs.Runes))
+			}
+		}
+		fmt.Println("\nGenerator pools (termo charsets gen NAME POOL [COUNT]):", strings.Join(engine.GlyphSetNames(), ", "))
+	case "add":
+		if arg(1) == "" || arg(2) == "" {
+			return errors.New("usage: termo charsets add NAME 'CHARS'   (emptiest character first; --sort orders them for you)")
+		}
+		chars := arg(2)
+		if c.has("sort") {
+			chars = engine.SortByDensity(chars)
+		}
+		if err := lib.SaveCharset(arg(1), chars); err != nil {
+			return err
+		}
+		fmt.Printf("saved charset %s |%s|\n", arg(1), chars)
+	case "gen":
+		n := 12
+		if v, err := strconv.Atoi(arg(3)); err == nil {
+			n = v
+		}
+		if arg(1) == "" || arg(2) == "" {
+			return errors.New("usage: termo charsets gen NAME POOL [COUNT]")
+		}
+		chars := engine.GenCharset(arg(2), n, c.has("random"), rand.New(rand.NewSource(time.Now().UnixNano())))
+		if err := lib.SaveCharset(arg(1), chars); err != nil {
+			return err
+		}
+		fmt.Printf("saved charset %s |%s|\n", arg(1), chars)
+	case "rm", "delete", "del":
+		if err := lib.Delete("charset", arg(1)); err != nil {
+			return err
+		}
+		fmt.Println("deleted", arg(1))
+	default:
+		return fmt.Errorf("unknown charsets command %q (list, add, gen, rm)", sub)
+	}
+	return nil
+}
+
+func cmdThemes(c *cli, lib *app.Library) error {
+	depth, err := c.depth()
+	if err != nil {
+		return err
+	}
+	for _, t := range lib.AllThemes() {
+		tag := "user"
+		if t.Builtin {
+			tag = "built-in"
+		}
+		fmt.Printf("  %-14s %-9s %s\n", t.Name, tag, swatches(t.RGBs(), depth))
+	}
+	return nil
+}
+
+func listPalettes(c *cli) error {
 	depth, err := c.depth()
 	if err != nil {
 		return err
@@ -520,7 +666,7 @@ func cmdPalettes(c *cli) error {
 		fmt.Printf("  %-12s %3d  %s\n", name, len(colors), strings.Join(hex, " "))
 	}
 	fmt.Println("Named palettes (--palette NAME):")
-	for _, p := range engine.NamedPalettes {
+	for _, p := range engine.AllPalettes() {
 		line(p.Name, p.Colors)
 	}
 	fmt.Println("\nGenerated palettes:")
@@ -652,7 +798,9 @@ Usage:
   termo bench [options] <file>      measure render speed (--frames N, --size, --all)
   termo info  <file>                show stream information
   termo presets [list|show|save|edit|rename|rm|path] [name]
-  termo palettes                    list palettes and color schemes
+  termo palettes [add|import|rm|export]   list palettes, or manage your own
+  termo charsets [add|gen|rm]       list ASCII ramps, or manage your own
+  termo themes                      list interface themes
   termo options                     list every look option with its values
 
 Common options (termo options lists all of them):

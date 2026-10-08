@@ -11,8 +11,6 @@ import (
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/tty"
 )
 
-const cBtn uint32 = 0x24283b
-
 // Prompt is a one-line text input dialog.
 type Prompt struct {
 	title, hint string
@@ -36,7 +34,7 @@ func (p *Prompt) draw(a *App) {
 		first = p.cur - fw + 1
 	}
 	for i := 0; i < fw; i++ {
-		c := tty.Cell{Ch: ' ', Fg: 0xffffff, Bg: cBar}
+		c := tty.Cell{Ch: ' ', Fg: cFg, Bg: cBar}
 		if first+i < len(p.buf) {
 			c.Ch = p.buf[first+i]
 		}

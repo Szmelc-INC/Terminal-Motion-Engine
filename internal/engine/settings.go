@@ -117,8 +117,9 @@ var Charsets = []Charset{
 }
 
 func charsetNames() []string {
-	out := make([]string, len(Charsets))
-	for i, c := range Charsets {
+	all := AllCharsets()
+	out := make([]string, len(all))
+	for i, c := range all {
 		out[i] = c.Name
 	}
 	return out
@@ -132,8 +133,8 @@ func (l *Look) Ramp() []rune {
 		}
 		return Charsets[0].Runes
 	}
-	for _, c := range Charsets {
-		if c.Name == l.Charset {
+	for _, c := range AllCharsets() {
+		if c.Name == l.Charset && len(c.Runes) >= 2 {
 			return c.Runes
 		}
 	}
@@ -468,7 +469,8 @@ func RandomPalette(l *Look, rng *rand.Rand) {
 	case r < 0.55:
 		RandomHarmony(l, rng)
 	case r < 0.85:
-		l.Palette = NamedPalettes[rng.Intn(len(NamedPalettes))].Name
+		all := AllPalettes()
+		l.Palette = all[rng.Intn(len(all))].Name
 	case r < 0.95:
 		l.Palette = PalAdaptive
 		l.Colors = []int{2, 3, 4, 6, 8, 12, 16, 32}[rng.Intn(8)]

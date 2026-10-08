@@ -9,21 +9,6 @@ import (
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/tty"
 )
 
-// Theme.
-const (
-	cBar    uint32 = 0x16161e
-	cPanel  uint32 = 0x1a1b26
-	cFg     uint32 = 0xc0caf5
-	cDim    uint32 = 0x565f89
-	cAccent uint32 = 0x7aa2f7
-	cSel    uint32 = 0x283457
-	cHot    uint32 = 0x3b4261
-	cGreen  uint32 = 0x9ece6a
-	cYellow uint32 = 0xe0af68
-	cRed    uint32 = 0xf7768e
-	cTrack  uint32 = 0x414868
-)
-
 func fmtTime(t float64) string {
 	if t < 0 {
 		t = 0
@@ -72,7 +57,7 @@ func (a *App) slider(x, y, w int, frac float64, fg, bg uint32) {
 			c.Ch, c.Fg = '─', cTrack
 		}
 		if i == knob {
-			c.Ch, c.Fg = '●', 0xffffff
+			c.Ch, c.Fg = '●', cFg
 		}
 		a.scr.Set(x+i, y, c)
 	}
@@ -131,6 +116,9 @@ func (a *App) draw() {
 	if a.help {
 		a.drawHelp()
 	}
+	if a.form != nil {
+		a.form.draw(a)
+	}
 	if a.prompt != nil {
 		a.prompt.draw(a)
 	}
@@ -146,7 +134,7 @@ func (a *App) draw() {
 		if s.H < 4 {
 			y = 0
 		}
-		s.Text((s.W-len(msg))/2, y, string(msg), 0x1a1b26, cYellow, engine.AttrBold, -1)
+		s.Text((s.W-len(msg))/2, y, string(msg), cBar, cYellow, engine.AttrBold, -1)
 	}
 	n, _ := s.Flush()
 	a.flushBytes += (float64(n) - a.flushBytes) * 0.1
@@ -206,7 +194,7 @@ func (a *App) drawHUD() {
 	if a.hover(bx, y, bw, 1) && dur > 0 {
 		tip := " " + fmtTime(sliderFrac(a.mx-bx, bw)*dur) + " "
 		tx := max(0, min(W-len(tip), a.mx-len(tip)/2))
-		s.Text(tx, y-1, tip, 0x1a1b26, cAccent, 0, -1)
+		s.Text(tx, y-1, tip, cBar, cAccent, 0, -1)
 	}
 	a.on(0, y, W, 1, func(ev tty.Event, rx, _ int) {
 		switch ev.Action {
@@ -373,7 +361,7 @@ func (a *App) frame(title string, x, y, w, h int) {
 	s.Dim(x+2, y+1, w, h)
 	s.Fill(x, y, w, h, tty.Cell{Ch: ' ', Fg: cFg, Bg: cPanel})
 	s.Fill(x, y, w, 1, tty.Cell{Ch: ' ', Bg: cSel})
-	s.Text(x+2, y, title, 0xffffff, cSel, engine.AttrBold, w-4)
+	s.Text(x+2, y, title, cFg, cSel, engine.AttrBold, w-4)
 }
 
 // helpLines lists every binding of the active layers, grouped by layer.
@@ -448,6 +436,8 @@ func (a *App) handle(ev tty.Event) {
 		a.confirm.key(a, ev)
 	case a.prompt != nil:
 		a.prompt.key(a, ev)
+	case a.form != nil:
+		a.form.key(a, ev)
 	case a.help:
 		switch ev.Key {
 		case tty.KeyUp:
@@ -535,19 +525,6 @@ func (a *App) videoMouse(ev tty.Event, _, _ int) {
 	}
 }
 
-func (a *App) toggleMenu(tab int) {
-	if a.menu != nil && (tab < 0 || tab == a.menu.tab) {
-		a.menu = nil
-		return
-	}
-	if a.menu == nil {
-		a.menu = newMenu()
-	}
-	if tab >= 0 {
-		a.menu.tab = tab
-	}
-}
-
 func (a *App) savePresetPrompt() {
 	name := a.preset
 	if p, ok := a.store.Find(name); ok && p.Builtin {
@@ -562,6 +539,7 @@ func (a *App) savePreset(name string, askOverwrite bool) {
 		a.say(err.Error(), 2*time.Second)
 		return
 	}
+	name = strings.TrimSpace(name)
 	if p, ok := a.store.Find(name); ok && !p.Builtin && askOverwrite && !strings.EqualFold(name, a.preset) {
 		a.confirm = &Confirm{msg: fmt.Sprintf("Overwrite preset %q?", p.Name), yes: func() { a.savePreset(name, false) }}
 		return
@@ -571,6 +549,7 @@ func (a *App) savePreset(name string, askOverwrite bool) {
 		return
 	}
 	a.preset = name
+	pgPresets.selectName(a, name)
 	a.say("saved preset: "+name, 1500*time.Millisecond)
 }
 

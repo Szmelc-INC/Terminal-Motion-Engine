@@ -191,7 +191,7 @@ const (
 // PaletteChoices lists every value the palette option accepts.
 func PaletteChoices() []string {
 	out := []string{PalOff, PalHarmony, PalAdaptive, PalGray, PalCube, PalAnsi16, PalXterm, PalCustom}
-	for _, n := range NamedPalettes {
+	for _, n := range AllPalettes() {
 		out = append(out, n.Name)
 	}
 	return out
@@ -482,10 +482,8 @@ func PaletteColors(l *Look, sample []byte) []RGB {
 		}
 		return out
 	}
-	for _, np := range NamedPalettes {
-		if np.Name == l.Palette {
-			return np.Colors
-		}
+	if c, ok := FindPalette(l.Palette); ok && len(c) > 0 {
+		return c
 	}
 	return nil
 }
@@ -501,7 +499,7 @@ func paletteKey(l *Look) string {
 	case PalCustom:
 		return "c/" + strings.Join(l.Custom, ",")
 	}
-	return l.Palette
+	return fmt.Sprintf("%s/%d", l.Palette, libGen)
 }
 
 // RandomHarmony fills in the harmony fields of a look with a random but

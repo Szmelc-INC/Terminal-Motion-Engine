@@ -141,7 +141,10 @@ func init() {
 		{"r", "RANDOMIZE the whole look", func(a *App) { a.randomize(false) }},
 		{"R", "randomize the palette only", func(a *App) { a.randomize(true) }},
 		{"u U", "undo the last change", func(a *App) { a.undo() }},
-		{"tab f2 s S", "settings menu", func(a *App) { a.toggleMenu(-1) }},
+		{"tab f2 s S", "picture settings", func(a *App) { a.openPanel("picture", -1) }},
+		{"f7", "presets", func(a *App) { a.openPanel("presets", -1) }},
+		{"f8", "palettes & symbols: managers, generators, editor", func(a *App) { a.openPanel("palettes", -1) }},
+		{"f12", "preferences & themes", func(a *App) { a.openPanel("prefs", -1) }},
 		{"p P", "next / previous preset", nil},
 		{"ctrl+s", "save the look as a preset", func(a *App) { a.savePresetPrompt() }},
 
@@ -158,6 +161,7 @@ func init() {
 
 		{"h", "HUD auto / on / off", func(a *App) {
 			a.hud = map[string]string{"auto": "on", "on": "off", "off": "auto"}[a.hud]
+			a.savePrefs()
 			a.say("HUD: "+a.hud, time.Second)
 		}},
 		{"g", "performance stats", func(a *App) { a.stats = !a.stats }},
@@ -277,6 +281,7 @@ func (a *App) setUI(n int) {
 	if a.menu != nil {
 		a.menu.placed = false
 	}
+	a.savePrefs()
 	a.say("interface: "+uiNames[a.ui], 1200*time.Millisecond)
 }
 

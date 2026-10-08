@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"syscall"
@@ -31,6 +32,8 @@ type Config struct {
 	Store     *Store
 	Preset    string // name of the preset the settings came from
 	UIScale   int    // interface size: 0 compact, 1 normal, 2 large, 3 huge
+	Lib       *Library
+	Prefs     *Prefs
 }
 
 type hit struct {
@@ -115,6 +118,11 @@ type App struct {
 	async chan func()
 	ui    int // interface size, see Config.UIScale
 
+	lib   *Library
+	prefs *Prefs
+	menus map[string]*Menu
+	form  *Form
+
 	menu    *Menu
 	help    bool
 	helpTop int
@@ -148,7 +156,16 @@ func Run(cfg Config) (err error) {
 		cfg: cfg, term: t, store: cfg.Store, s: cfg.Settings, files: cfg.Files,
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())), hud: cfg.HUD, stats: cfg.Stats,
 		preset: cfg.Preset, speed: cfg.Settings.Speed, lastActivity: time.Now(), mx: -1, my: -1,
-		async: make(chan func(), 64), ui: cfg.UIScale,
+		async: make(chan func(), 64), ui: cfg.UIScale, lib: cfg.Lib, prefs: cfg.Prefs,
+	}
+	if a.lib == nil {
+		a.lib = &Library{Path: filepath.Join(filepath.Dir(a.store.Path), "library.json")}
+	}
+	if a.prefs == nil {
+		a.prefs = &Prefs{Path: filepath.Join(filepath.Dir(a.store.Path), "config.json"), Theme: BuiltinThemes[0].Name}
+	}
+	if th, ok := a.lib.FindTheme(a.prefs.Theme); ok {
+		applyTheme(th)
 	}
 	if a.hud == "" {
 		a.hud = "auto"
