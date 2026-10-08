@@ -42,6 +42,18 @@ type Look struct {
 	Edges         string  `json:"edges"`
 	EdgeThreshold float64 `json:"edge_threshold"`
 
+	Exposure    float64 `json:"exposure"` // stops
+	Black       float64 `json:"black"`    // input level that becomes black
+	White       float64 `json:"white"`    // input level that becomes white
+	Shadows     float64 `json:"shadows"`
+	Highlights  float64 `json:"highlights"`
+	Fade        float64 `json:"fade"`
+	Vibrance    float64 `json:"vibrance"`
+	Temperature float64 `json:"temperature"`
+	Tint        float64 `json:"tint"`
+
+	FX
+
 	// Resample is bumped to make the adaptive palette re-read the picture.
 	Resample int `json:"-"`
 }
@@ -148,7 +160,8 @@ func DefaultLook() Look {
 		Mode: ModeHalf, Charset: "standard", Color: true, Background: "default", Fit: "fit",
 		Palette: PalOff, Colors: 8, Scheme: "analogous", Hue: 200, Chroma: 0.14, LMin: 0.1, LMax: 0.95,
 		Dither: "bayer4", DitherAmount: 1, Serpentine: true,
-		Contrast: 1, Gamma: 1, Saturation: 1, Edges: "off", EdgeThreshold: 0.15,
+		Contrast: 1, Gamma: 1, Saturation: 1, Edges: "off", EdgeThreshold: 0.15, White: 1,
+		FX: DefaultFX(),
 	}
 }
 

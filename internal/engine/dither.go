@@ -185,7 +185,22 @@ var (
 	matricesMu sync.Mutex
 )
 
-var orderedNames = []string{"bayer2", "bayer4", "bayer8", "bluenoise", "whitenoise", "grain", "halftone", "hlines", "vlines", "diagonal"}
+var orderedNames = []string{"bayer2", "bayer4", "bayer8", "bayer16", "bluenoise", "whitenoise", "grain", "halftone",
+	"cluster4", "cluster8", "diamond", "spiral", "hlines", "vlines", "diagonal", "crosshatch", "grid", "checker",
+	"waves", "zigzag", "bricks", "weave"}
+
+// tie is a well-spread ordering of the cells of an 8×8 tile (the Bayer
+// order). Patterns add a little of it to their scores so that no two cells
+// tie: a pattern whose levels cover unequal areas would otherwise shift the
+// brightness of the picture.
+func tie(x, y int) float64 {
+	v := 0
+	for bit := 0; bit < 3; bit++ {
+		xb, yb := x>>bit&1, y>>bit&1
+		v = v<<2 | (xb^yb)<<1 | yb
+	}
+	return float64(v) / 64
+}
 
 func matrixFor(name string) *matrix {
 	matricesMu.Lock()
@@ -201,6 +216,82 @@ func matrixFor(name string) *matrix {
 		m = bayer(4)
 	case "bayer8":
 		m = bayer(8)
+	case "bayer16":
+		m = bayer(16)
+	case "cluster4":
+		// The classic clustered-dot screen: dots grow from the centre.
+		order := []float64{12, 5, 6, 13, 4, 0, 1, 7, 11, 3, 2, 8, 15, 10, 9, 14}
+		m = patternMatrix(4, func(x, y int) float64 { return order[y*4+x] })
+	case "cluster8":
+		// Two dots per tile on a diagonal: a 45° newspaper screen.
+		m = patternMatrix(8, func(x, y int) float64 {
+			d := func(cx, cy float64) float64 {
+				dx, dy := math.Abs(float64(x)-cx), math.Abs(float64(y)-cy)
+				dx, dy = math.Min(dx, 8-dx), math.Min(dy, 8-dy)
+				return dx*dx + dy*dy
+			}
+			return math.Min(d(1.5, 1.5), d(5.5, 5.5))*10 + tie(x, y)
+		})
+	case "diamond":
+		m = patternMatrix(8, func(x, y int) float64 {
+			return (math.Abs(float64(x)-3.5)+math.Abs(float64(y)-3.5))*10 + tie(x, y)
+		})
+	case "spiral":
+		// Walk outwards from the centre in a square spiral.
+		rank := make([]float64, 64)
+		x, y, dx, dy := 3, 3, 1, 0
+		for i, run, left, turns := 0, 1, 1, 0; i < 64; {
+			if x >= 0 && x < 8 && y >= 0 && y < 8 {
+				rank[y*8+x] = float64(i)
+				i++
+			}
+			x, y = x+dx, y+dy
+			if left--; left == 0 {
+				dx, dy = -dy, dx
+				if turns++; turns%2 == 0 {
+					run++
+				}
+				left = run
+			}
+		}
+		m = patternMatrix(8, func(x, y int) float64 { return rank[y*8+x] })
+	case "crosshatch":
+		m = patternMatrix(8, func(x, y int) float64 {
+			a, b := (x-y+8)%8, (x+y)%8
+			return float64(min(min(a, 8-a), min(b, 8-b)))*10 + tie(x, y)
+		})
+	case "grid":
+		m = patternMatrix(8, func(x, y int) float64 { return float64(min(x%4, y%4))*10 + tie(x, y) })
+	case "checker":
+		m = patternMatrix(2, func(x, y int) float64 { return float64((x + y) % 2) })
+	case "waves":
+		m = patternMatrix(8, func(x, y int) float64 {
+			v := float64(y) + 1.6*math.Sin(2*math.Pi*float64(x)/8)
+			return math.Mod(v+16, 4)*10 + tie(x, y)
+		})
+	case "zigzag":
+		m = patternMatrix(8, func(x, y int) float64 {
+			z := x % 8
+			if z > 4 {
+				z = 8 - z
+			}
+			return float64((y+z)%4)*10 + tie(x, y)
+		})
+	case "bricks":
+		m = patternMatrix(8, func(x, y int) float64 {
+			mortar := y%4 == 3 || (x+(y/4%2)*4)%8 == 7
+			if mortar {
+				return tie(x, y)
+			}
+			return 10 + tie(x, y)*8
+		})
+	case "weave":
+		m = patternMatrix(8, func(x, y int) float64 {
+			if (x/4+y/4)%2 == 0 {
+				return float64(x%4)*10 + tie(x, y)
+			}
+			return float64(y%4)*10 + tie(x, y)
+		})
 	case "bluenoise":
 		m = blueNoise()
 	case "whitenoise", "grain":
@@ -240,9 +331,13 @@ var kernels = map[string]*kernel{
 		{-1, 2, 2}, {0, 2, 3}, {1, 2, 2}}, 32},
 	"sierra2":     {[]tap{{1, 0, 4}, {2, 0, 3}, {-2, 1, 1}, {-1, 1, 2}, {0, 1, 3}, {1, 1, 2}, {2, 1, 1}}, 16},
 	"sierra-lite": {[]tap{{1, 0, 2}, {-1, 1, 1}, {0, 1, 1}}, 4},
+	"false-fs":    {[]tap{{1, 0, 3}, {0, 1, 3}, {1, 1, 2}}, 8},
+	"fan":         {[]tap{{1, 0, 7}, {-2, 1, 1}, {-1, 1, 3}, {0, 1, 5}}, 16},
+	"shiau-fan":   {[]tap{{1, 0, 4}, {-2, 1, 1}, {-1, 1, 1}, {0, 1, 2}}, 8},
 }
 
-var diffusionNames = []string{"floyd-steinberg", "atkinson", "jjn", "stucki", "burkes", "sierra", "sierra2", "sierra-lite"}
+var diffusionNames = []string{"floyd-steinberg", "false-fs", "atkinson", "jjn", "stucki", "burkes", "sierra", "sierra2",
+	"sierra-lite", "fan", "shiau-fan"}
 
 // DitherNames lists every dithering algorithm: "none", the ordered
 // (frame-stable) patterns, then the error-diffusion kernels.
