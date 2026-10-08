@@ -22,7 +22,7 @@ import (
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/tty"
 )
 
-const version = "2.0.0"
+const version = "3.0.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

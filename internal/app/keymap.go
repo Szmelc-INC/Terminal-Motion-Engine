@@ -254,7 +254,8 @@ func init() {
 		}),
 		key("o", "", "open a file", func(a *App) { a.openBrowser() }),
 		key("esc", "", "close the panel", func(a *App) { a.menu = nil }),
-		key("q Q", "", "quit", func(a *App) { a.quit = true }),
+		note("ctrl+l", "redraw the screen"),
+		key("q Q", "", "quit (Ctrl+C too)", func(a *App) { a.quit = true }),
 
 		step("alt+right", "alt+left", "", "", func(a *App, d int) { a.pan(d, 0) }),
 		step("alt+down", "alt+up", "", "", func(a *App, d int) { a.pan(0, d) }),
