@@ -42,10 +42,6 @@ func action(label, help string, fg *uint32, fn func()) field {
 	return field{label: label, help: help, kind: fAction, act: fn, fg: fg}
 }
 
-// lookGroup reports whether options of a group belong to the look, and so
-// take part in undo.
-func lookGroup(g string) bool { return g != "Playback" && !strings.HasPrefix(g, "Audio") }
-
 // optField adapts an entry of the option table.
 func (a *App) optField(o *engine.Option) field {
 	f := field{label: o.Label, dim: !o.IsActive(&a.s), str: func() string { return o.String(&a.s) }}
@@ -53,8 +49,9 @@ func (a *App) optField(o *engine.Option) field {
 	if o.Help != "" {
 		f.help = o.Help + "  (--" + o.Key + ")"
 	}
+	// The look and the sound take part in undo; the transport does not.
 	pre := func() {
-		if lookGroup(o.Group) {
+		if o.Group != "Playback" {
 			a.touch()
 		}
 	}

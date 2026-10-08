@@ -453,6 +453,39 @@ func TestModeReset(t *testing.T) {
 	}
 }
 
+// A sound setting changed in a panel is an undo step of its own: undo takes
+// it back and leaves the look change before it alone.
+func TestUndoPanelSound(t *testing.T) {
+	a := newTestApp(t, 100, 30)
+	press(a, "alt+3", "b")
+	bright := a.s.Brightness
+	if bright <= 0 {
+		t.Fatal("b changed nothing")
+	}
+	a.lastTouch = a.lastTouch.Add(-2 * time.Second)
+	a.optField(engine.FindOption("bass")).nudge(3)
+	if a.s.Sound.Bass != 3 {
+		t.Fatalf("bass %v after the panel raised it", a.s.Sound.Bass)
+	}
+	press(a, "u")
+	if a.s.Sound.Bass != 0 || a.s.Brightness != bright {
+		t.Errorf("first undo: bass %v, brightness %v (want 0, %v)", a.s.Sound.Bass, a.s.Brightness, bright)
+	}
+	press(a, "u")
+	if a.s.Brightness != 0 {
+		t.Errorf("second undo: brightness %v", a.s.Brightness)
+	}
+	// The same through a typed value.
+	a.lastTouch = a.lastTouch.Add(-2 * time.Second)
+	if err := a.optField(engine.FindOption("reverb")).set("0.5"); err != nil {
+		t.Fatal(err)
+	}
+	press(a, "u")
+	if a.s.Sound.ReverbMix != 0 {
+		t.Errorf("undo left reverb at %v", a.s.Sound.ReverbMix)
+	}
+}
+
 func TestModeColors(t *testing.T) {
 	defer applyTheme(BuiltinThemes[0])
 	for _, th := range BuiltinThemes {
@@ -597,8 +630,14 @@ func TestPlaylistEdits(t *testing.T) {
 	}
 	a.removeFile(0)
 	a.removeFile(0)
-	if len(a.files) != 1 || a.files[0] != cur {
+	if len(a.files) != 1 || a.files[0] != cur || a.fileIdx != 0 {
 		t.Errorf("the last file was removed: %v", a.files)
+	}
+	// Removing the entry the index points at, at the end of the list.
+	a.files, a.fileIdx = []string{"a.gif", "b.gif"}, 1
+	a.removeFile(1)
+	if a.fileIdx != 0 || len(a.files) != 1 {
+		t.Errorf("removing the last, current file: idx %d, %v", a.fileIdx, a.files)
 	}
 	// The pages draw and list what is there.
 	a.files = []string{"/tmp/x/one.gif", "https://example.com/two.mp4"}

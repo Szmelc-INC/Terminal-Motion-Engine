@@ -495,6 +495,9 @@ func (a *App) setMode(i int) {
 func (a *App) follow(mode string) {
 	if i := findMode(mode); i >= 0 && i != a.mode {
 		a.mode, a.lastBind = i, nil
+		if a.prefs != nil && a.prefs.Keys == "last" {
+			a.savePrefs()
+		}
 	}
 }
 

@@ -304,6 +304,7 @@ func (a *App) removeFile(i int) {
 	case i == a.fileIdx && a.loaded:
 		a.open(i%len(a.files), 0)
 	}
+	a.fileIdx = min(a.fileIdx, len(a.files)-1)
 	a.say("removed "+name+" from the playlist", 1500*time.Millisecond)
 }
 
