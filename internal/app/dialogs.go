@@ -139,7 +139,7 @@ var MediaExts = map[string]bool{
 	".mp4": true, ".mkv": true, ".webm": true, ".avi": true, ".mov": true, ".wmv": true, ".flv": true,
 	".mpg": true, ".mpeg": true, ".m4v": true, ".ts": true, ".mts": true, ".m2ts": true, ".ogv": true,
 	".3gp": true, ".gif": true, ".apng": true, ".png": true, ".jpg": true, ".jpeg": true, ".bmp": true,
-	".webp": true,
+	".webp": true, ".m3u8": true,
 }
 
 type bitem struct {
@@ -154,6 +154,13 @@ type Browser struct {
 	sel    int
 	scroll int
 	err    string
+}
+
+// openBrowserAt opens the file browser on a folder.
+func (a *App) openBrowserAt(dir string) {
+	b := &Browser{}
+	b.load(dir)
+	a.browser = b
 }
 
 func (a *App) openBrowser() {
@@ -247,7 +254,7 @@ func (b *Browser) activate(a *App) {
 		files = append(files, filepath.Join(b.dir, x.name))
 	}
 	a.files = files
-	a.browser = nil
+	a.browser, a.finderOpen = nil, false
 	a.open(idx, 0)
 }
 

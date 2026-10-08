@@ -110,6 +110,9 @@ func (a *App) draw() {
 	if a.menu != nil {
 		a.menu.draw(a)
 	}
+	if a.finder != nil {
+		a.finder.draw(a)
+	}
 	if a.browser != nil {
 		a.browser.draw(a)
 	}
@@ -154,6 +157,9 @@ func (a *App) drawHUD() {
 	}
 	if a.loaded {
 		title += fmt.Sprintf("  %dx%d %.4g fps", a.info.Width, a.info.Height, a.info.FPS)
+	}
+	if n := a.activeDownloads(); n > 0 {
+		title += fmt.Sprintf("  ↓ %d downloading", n)
 	}
 	x += s.Text(x, 0, title, cFg, cBar, 0, W-x-1)
 	right := Summary(a.s.Look)
@@ -453,6 +459,8 @@ func (a *App) handle(ev tty.Event) {
 		}
 	case a.browser != nil:
 		a.browser.key(a, ev)
+	case a.finder != nil && a.finderOpen:
+		a.finder.key(a, ev)
 	case a.menu != nil && a.menu.key(a, ev):
 	default:
 		a.playerKey(ev)

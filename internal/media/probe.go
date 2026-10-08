@@ -28,6 +28,17 @@ type Info struct {
 	HasAudio bool
 	Codec    string
 	Still    bool
+	// AudioPath is where the sound comes from when a site serves picture
+	// and sound as separate streams; empty means "the same as Path".
+	AudioPath string
+}
+
+// AudioSrc returns the input that carries the sound track.
+func (i Info) AudioSrc() string {
+	if i.AudioPath != "" {
+		return i.AudioPath
+	}
+	return i.Path
 }
 
 // Aspect returns the display aspect ratio (width / height).
@@ -67,7 +78,9 @@ func ratio(s string) float64 {
 // Probe reads stream information with ffprobe.
 func Probe(path string) (Info, error) {
 	info := Info{Path: path, Name: filepath.Base(path)}
-	if st, err := os.Stat(path); err != nil {
+	if IsURL(path) {
+		info.PreInput = netArgs(path)
+	} else if st, err := os.Stat(path); err != nil {
 		return info, err
 	} else if st.IsDir() {
 		return probeDir(path)

@@ -54,6 +54,14 @@ var extras = map[string]extra{
 	"all":        {false, "bench: measure every mode and dither"},
 	"presets":    {true, "path to the preset file"},
 	"sort":       {false, "charsets add: order the characters from empty to full"},
+	"site":       {true, "find/search/get: youtube, giphy, tenor, pinterest, archive, wikimedia, url"},
+	"kind":       {true, "search filter: any, video, gif, image"},
+	"length":     {true, "search filter: any, short, medium, long"},
+	"sort-by":    {true, "search order: relevance, date, views"},
+	"count":      {true, "search: number of results"},
+	"pick":       {true, "get: which search result to take (default 1)"},
+	"as":         {true, "get: mp4, mp4-720, mp4-480, webm, mkv, gif, mp3, m4a, opus, flac, wav, original"},
+	"dir":        {true, "get: folder to save into"},
 	"help":       {false, "show help"},
 	"version":    {false, "show version"},
 }
@@ -254,7 +262,8 @@ func run(argv []string) error {
 	cmd := ""
 	if len(c.args) > 0 {
 		switch c.args[0] {
-		case "play", "snap", "bench", "info", "presets", "palettes", "charsets", "themes", "options":
+		case "play", "snap", "bench", "info", "presets", "palettes", "charsets", "themes", "options",
+			"find", "search", "get":
 			// A file that happens to share a command's name still plays.
 			if _, err := os.Stat(c.args[0]); err != nil || c.args[0] == "play" {
 				cmd, c.args = c.args[0], c.args[1:]
@@ -270,6 +279,18 @@ func run(argv []string) error {
 		return cmdCharsets(c, lib)
 	case "themes":
 		return cmdThemes(c, lib)
+	case "search", "get":
+		prefs, err := app.LoadPrefs(filepath.Dir(store.Path))
+		if err != nil {
+			return fmt.Errorf("cannot load the preferences: %v", err)
+		}
+		if cmd == "search" {
+			return cmdSearch(c, prefs)
+		}
+		if err := media.CheckTools(); err != nil {
+			return err
+		}
+		return cmdGet(c, prefs)
 	case "options":
 		return cmdOptions()
 	}
@@ -284,10 +305,10 @@ func run(argv []string) error {
 	case "bench":
 		return cmdBench(c, store)
 	}
-	return cmdPlay(c, store, lib)
+	return cmdPlay(c, store, lib, cmd == "find")
 }
 
-func cmdPlay(c *cli, store *app.Store, lib *app.Library) error {
+func cmdPlay(c *cli, store *app.Store, lib *app.Library, find bool) error {
 	s, preset, err := c.settings(store)
 	if err != nil {
 		return err
@@ -306,9 +327,28 @@ func cmdPlay(c *cli, store *app.Store, lib *app.Library) error {
 	default:
 		return fmt.Errorf("--hud: %q is not one of auto, on, off", hud)
 	}
-	for _, f := range c.args {
-		if _, err := os.Stat(f); err != nil {
-			return fmt.Errorf("cannot open %s: no such file or folder", f)
+	files, findQuery, findSite := c.args, "", ""
+	var streams []app.Stream
+	if find {
+		// "termo find cats" opens the finder with that search already run.
+		files, findQuery = nil, strings.Join(c.args, " ")
+		if findQuery == "" {
+			findQuery = " "
+		}
+		site, _ := c.get("site")
+		p, err := findProvider(site)
+		if err != nil {
+			return err
+		}
+		findSite = p.Name
+	} else {
+		for _, f := range c.args {
+			if _, err := os.Stat(f); err != nil && !media.IsURL(f) {
+				return fmt.Errorf("cannot open %s: no such file or folder", f)
+			}
+		}
+		if files, streams, err = resolveArgs(c.args); err != nil {
+			return err
 		}
 	}
 	prefs, err := app.LoadPrefs(filepath.Dir(store.Path))
@@ -326,8 +366,8 @@ func cmdPlay(c *cli, store *app.Store, lib *app.Library) error {
 	}
 	sink, _ := c.get("audio-sink")
 	return app.Run(app.Config{
-		UIScale: ui, Lib: lib, Prefs: prefs,
-		Files: c.args, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
+		UIScale: ui, Lib: lib, Prefs: prefs, Find: findQuery, FindSite: findSite, Streams: streams,
+		Files: files, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
 		HWAccel: c.has("hwaccel"), HUD: hud, Depth: depth, Start: start, Stats: c.has("stats") || prefs.Stats,
 		Store: store, Preset: preset,
 	})
@@ -797,6 +837,10 @@ Usage:
   termo snap  [options] <file>      print a single frame (--at SEC, --size COLSxROWS)
   termo bench [options] <file>      measure render speed (--frames N, --size, --all)
   termo info  <file>                show stream information
+  termo find  [words…]              search the web for media: browse, preview, play, download
+  termo search [--site S] words…    print search results (youtube, giphy, tenor, pinterest, archive, wikimedia)
+  termo get [--as FORMAT] <link | words…>   download a link or the best match (mp4, webm, gif, mp3, wav…)
+  termo <link>                      play a YouTube / web link without saving it
   termo presets [list|show|save|edit|rename|rm|path] [name]
   termo palettes [add|import|rm|export]   list palettes, or manage your own
   termo charsets [add|gen|rm]       list ASCII ramps, or manage your own

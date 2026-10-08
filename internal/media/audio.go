@@ -153,6 +153,7 @@ func (a *Audio) Play(path string, start, speed float64, loop bool) {
 	if start > 0 {
 		args = append(args, "-ss", ftoa(start))
 	}
+	args = append(args, netArgs(path)...)
 	args = append(args, "-i", path, "-map", "0:a:0", "-vn", "-sn", "-dn")
 	if math.Abs(speed-1) > 0.001 {
 		args = append(args, "-af", atempo(speed))

@@ -166,6 +166,7 @@ func init() {
 		}},
 		{"g", "performance stats", func(a *App) { a.stats = !a.stats }},
 		{"o", "open a file", func(a *App) { a.openBrowser() }},
+		{"f9 /", "find media on the web: search, preview, download", func(a *App) { a.openFinder("") }},
 		{"n N", "next / previous file", nil},
 		{"f1 ?", "this help", func(a *App) { a.help, a.helpTop = true, 0 }},
 		{"esc", "close the menu", func(a *App) { a.menu = nil }},

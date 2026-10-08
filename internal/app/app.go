@@ -8,11 +8,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/engine"
+	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/fetch"
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/media"
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/tty"
 )
@@ -34,7 +36,13 @@ type Config struct {
 	UIScale   int    // interface size: 0 compact, 1 normal, 2 large, 3 huge
 	Lib       *Library
 	Prefs     *Prefs
+	Find      string   // open the media finder with this search
+	FindSite  string   // name of the site to search first
+	Streams   []Stream // what is known about web links among Files
 }
+
+// Stream describes a playlist entry that plays from the web.
+type Stream struct{ Path, Audio, Name string }
 
 type hit struct {
 	x, y, w, h int
@@ -120,8 +128,15 @@ type App struct {
 
 	lib   *Library
 	prefs *Prefs
-	menus map[string]*Menu
-	form  *Form
+
+	// meta holds what is known about playlist entries that are web
+	// streams: a readable name and, sometimes, a separate sound stream.
+	meta       map[string]streamMeta
+	finder     *Finder
+	finderOpen bool
+	downloads  []*download
+	menus      map[string]*Menu
+	form       *Form
 
 	menu    *Menu
 	help    bool
@@ -181,9 +196,24 @@ func Run(cfg Config) (err error) {
 	signal.Notify(sigs, syscall.SIGWINCH, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
 	defer signal.Stop(sigs)
 
-	if len(a.files) == 0 {
+	a.meta = map[string]streamMeta{}
+	for _, st := range cfg.Streams {
+		a.meta[st.Path] = streamMeta{name: st.Name, audio: st.Audio}
+	}
+	switch {
+	case cfg.Find != "":
+		a.openFinder("")
+		for i, p := range fetch.Providers {
+			if p.Name == cfg.FindSite {
+				a.finder.prov = i
+			}
+		}
+		if q := strings.TrimSpace(cfg.Find); q != "" {
+			a.openFinder(q)
+		}
+	case len(a.files) == 0:
 		a.openBrowser()
-	} else {
+	default:
 		a.open(0, cfg.Start)
 	}
 
@@ -327,6 +357,14 @@ func (a *App) open(idx int, start float64) {
 		}
 		return
 	}
+	if m, ok := a.meta[a.files[idx]]; ok {
+		if m.name != "" {
+			info.Name = m.name
+		}
+		if m.audio != "" {
+			info.AudioPath, info.HasAudio = m.audio, true
+		}
+	}
 	a.fileIdx, a.info, a.loaded = idx, info, true
 	a.ended, a.eof, a.seekReq = false, false, nil
 	if !a.cfg.LoopSet {
@@ -361,7 +399,7 @@ func (a *App) startAudio(pos float64) {
 		return
 	}
 	a.applyVolume()
-	a.aud.Play(a.info.Path, pos, a.s.Speed, a.s.Loop)
+	a.aud.Play(a.info.AudioSrc(), pos, a.s.Speed, a.s.Loop)
 }
 
 func (a *App) applyVolume() {
@@ -502,6 +540,9 @@ func (a *App) tick() {
 	}
 	if a.toast != "" && now.After(a.toastUntil) {
 		a.toast, a.dirty = "", true
+	}
+	if a.finder != nil {
+		a.finder.tick(a)
 	}
 	if a.hudVisible() != a.hudShown {
 		a.dirty = true
@@ -647,6 +688,9 @@ func (a *App) nextWake() time.Duration {
 	}
 	if a.eof && !a.ended {
 		near(0)
+	}
+	if a.finder != nil {
+		near(a.finder.wake())
 	}
 	if d < 0 {
 		d = 0
