@@ -8,6 +8,8 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +22,7 @@ import (
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/tty"
 )
 
-const version = "2.0.0"
+const version = "3.0.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -43,7 +45,9 @@ var extras = map[string]extra{
 	"audio-sink": {true, "shell command that plays raw s16le 48 kHz stereo PCM from stdin"},
 	"hwaccel":    {false, "let ffmpeg use hardware decoding"},
 	"hud":        {true, "HUD visibility: auto, on, off"},
+	"ui":         {true, "interface size: compact, normal, large, huge"},
 	"stats":      {false, "show the performance overlay"},
+	"keys":       {true, "bind mode to start in: play, video, color, fx, audio (termo keys lists the keys)"},
 	"depth":      {true, "terminal color depth: 24, 8 or 4 (default: auto-detect)"},
 	"start":      {true, "start position in seconds"},
 	"at":         {true, "snap: time of the frame to print, seconds"},
@@ -51,6 +55,17 @@ var extras = map[string]extra{
 	"frames":     {true, "bench: number of frames to measure"},
 	"all":        {false, "bench: measure every mode and dither"},
 	"presets":    {true, "path to the preset file"},
+	"sort":       {false, "charsets add: order the characters from empty to full"},
+	"sound":      {true, "start with a sound preset (termo sounds lists them)"},
+	"fx":         {true, "start with an effect preset on top of the look (termo effects lists them)"},
+	"site":       {true, "find/search/get: youtube, giphy, tenor, pinterest, archive, wikimedia, url"},
+	"kind":       {true, "search filter: any, video, gif, image"},
+	"length":     {true, "search filter: any, short, medium, long"},
+	"sort-by":    {true, "search order: relevance, date, views"},
+	"count":      {true, "search: number of results"},
+	"pick":       {true, "get: which search result to take (default 1)"},
+	"as":         {true, "get: mp4, mp4-720, mp4-480, webm, mkv, gif, mp3, m4a, opus, flac, wav, original"},
+	"dir":        {true, "get: folder to save into"},
 	"help":       {false, "show help"},
 	"version":    {false, "show version"},
 }
@@ -59,6 +74,9 @@ var shorts = map[string]string{
 	"m": "mode", "p": "palette", "d": "dither", "c": "colors", "P": "preset",
 	"f": "fps", "r": "random", "h": "help", "v": "version", "s": "start",
 }
+
+// library is the user's library, loaded once in run.
+var library *app.Library
 
 type flagVal struct{ key, val string }
 
@@ -163,6 +181,20 @@ func (c *cli) settings(store *app.Store) (engine.Settings, string, error) {
 		engine.Randomize(&s.Look, rand.New(rand.NewSource(seed)))
 		preset = ""
 	}
+	if name, ok := c.get("fx"); ok && library != nil {
+		fp, found := library.FindFX(name)
+		if !found {
+			return s, "", fmt.Errorf("no effect preset named %q (termo effects lists them)", name)
+		}
+		s.FX = fp.FX
+	}
+	if name, ok := c.get("sound"); ok && library != nil {
+		sp, found := library.FindSound(name)
+		if !found {
+			return s, "", fmt.Errorf("no sound named %q (termo sounds lists them)", name)
+		}
+		s.Sound = sp.Sound
+	}
 	for _, f := range c.flags {
 		if o := engine.FindOption(f.key); o != nil {
 			if err := o.Set(&s, f.val); err != nil {
@@ -242,10 +274,18 @@ func run(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot load presets: %v", err)
 	}
+	// The library registers user palettes and charsets with the engine, so
+	// every command (and every flag that names one) can use them.
+	lib, err := app.LoadLibrary(filepath.Dir(store.Path))
+	if err != nil {
+		return fmt.Errorf("cannot load the library: %v", err)
+	}
+	library = lib
 	cmd := ""
 	if len(c.args) > 0 {
 		switch c.args[0] {
-		case "play", "snap", "bench", "info", "presets", "palettes", "options":
+		case "play", "snap", "bench", "info", "presets", "palettes", "charsets", "themes", "options",
+			"find", "search", "get", "sounds", "effects", "keys":
 			// A file that happens to share a command's name still plays.
 			if _, err := os.Stat(c.args[0]); err != nil || c.args[0] == "play" {
 				cmd, c.args = c.args[0], c.args[1:]
@@ -256,7 +296,44 @@ func run(argv []string) error {
 	case "presets":
 		return cmdPresets(c, store)
 	case "palettes":
-		return cmdPalettes(c)
+		return cmdPalettes(c, lib)
+	case "charsets":
+		return cmdCharsets(c, lib)
+	case "themes":
+		return cmdThemes(c, lib)
+	case "keys":
+		return cmdKeys(c)
+	case "sounds":
+		for _, s := range lib.AllSounds() {
+			tag := "user"
+			if s.Builtin {
+				tag = "built-in"
+			}
+			fmt.Printf("  %-16s %-9s %s\n", s.Name, tag, engine.SoundSummary(s.Sound))
+		}
+		return nil
+	case "effects":
+		for _, f := range lib.AllFX() {
+			tag := "user"
+			if f.Builtin {
+				tag = "built-in"
+			}
+			fmt.Printf("  %-16s %-9s %s\n", f.Name, tag, engine.FXSummary(f.FX))
+		}
+		fmt.Println("\nFilters (--filter NAME):", strings.Join(engine.FilterNames()[1:], ", "))
+		return nil
+	case "search", "get":
+		prefs, err := app.LoadPrefs(filepath.Dir(store.Path))
+		if err != nil {
+			return fmt.Errorf("cannot load the preferences: %v", err)
+		}
+		if cmd == "search" {
+			return cmdSearch(c, prefs)
+		}
+		if err := media.CheckTools(); err != nil {
+			return err
+		}
+		return cmdGet(c, prefs)
 	case "options":
 		return cmdOptions()
 	}
@@ -271,10 +348,10 @@ func run(argv []string) error {
 	case "bench":
 		return cmdBench(c, store)
 	}
-	return cmdPlay(c, store)
+	return cmdPlay(c, store, lib, cmd == "find")
 }
 
-func cmdPlay(c *cli, store *app.Store) error {
+func cmdPlay(c *cli, store *app.Store, lib *app.Library, find bool) error {
 	s, preset, err := c.settings(store)
 	if err != nil {
 		return err
@@ -293,15 +370,54 @@ func cmdPlay(c *cli, store *app.Store) error {
 	default:
 		return fmt.Errorf("--hud: %q is not one of auto, on, off", hud)
 	}
-	for _, f := range c.args {
-		if _, err := os.Stat(f); err != nil {
-			return fmt.Errorf("cannot open %s: no such file or folder", f)
+	files, findQuery, findSite := c.args, "", ""
+	var streams []app.Stream
+	if find {
+		// "termo find cats" opens the finder with that search already run.
+		files, findQuery = nil, strings.Join(c.args, " ")
+		if findQuery == "" {
+			findQuery = " "
+		}
+		site, _ := c.get("site")
+		p, err := findProvider(site)
+		if err != nil {
+			return err
+		}
+		findSite = p.Name
+	} else {
+		for _, f := range c.args {
+			if _, err := os.Stat(f); err != nil && !media.IsURL(f) {
+				return fmt.Errorf("cannot open %s: no such file or folder", f)
+			}
+		}
+		if files, streams, err = resolveArgs(c.args); err != nil {
+			return err
+		}
+	}
+	prefs, err := app.LoadPrefs(filepath.Dir(store.Path))
+	if err != nil {
+		return fmt.Errorf("cannot load the preferences: %v", err)
+	}
+	if hud == "" {
+		hud = prefs.HUD
+	}
+	ui := app.UIScale(prefs.UI)
+	if v, ok := c.get("ui"); ok {
+		if ui = app.UIScale(v); ui < 0 {
+			return fmt.Errorf("--ui: %q is not one of compact, normal, large, huge", v)
 		}
 	}
 	sink, _ := c.get("audio-sink")
+	soundName, _ := c.get("sound")
+	keys, _ := c.get("keys")
+	if keys != "" && !slices.Contains(app.ModeNames(), keys) {
+		return fmt.Errorf("--keys: %q is not one of %s", keys, strings.Join(app.ModeNames(), ", "))
+	}
 	return app.Run(app.Config{
-		Files: c.args, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
-		HWAccel: c.has("hwaccel"), HUD: hud, Depth: depth, Start: start, Stats: c.has("stats"),
+		Keys:  keys,
+		Sound: soundName, UIScale: ui, Lib: lib, Prefs: prefs, Find: findQuery, FindSite: findSite, Streams: streams,
+		Files: files, Settings: s, LoopSet: c.has("loop"), NoAudio: c.has("no-audio"), AudioSink: sink,
+		HWAccel: c.has("hwaccel"), HUD: hud, Depth: depth, Start: start, Stats: c.has("stats") || prefs.Stats,
 		Store: store, Preset: preset,
 	})
 }
@@ -490,7 +606,140 @@ func swatches(colors []engine.RGB, depth int) string {
 	return strings.TrimRight(string(tty.Dump(cells, len(cells), 1, depth)), "\n")
 }
 
-func cmdPalettes(c *cli) error {
+// cmdPalettes lists the palettes, or manages the user's own:
+// add NAME COLORS · import SOURCE [NAME] · rm NAME · export NAME
+func cmdPalettes(c *cli, lib *app.Library) error {
+	if len(c.args) > 0 && c.args[0] != "list" && c.args[0] != "ls" {
+		arg := func(i int) string {
+			if len(c.args) > i {
+				return c.args[i]
+			}
+			return ""
+		}
+		switch sub := c.args[0]; sub {
+		case "add", "import":
+			name, src := arg(1), arg(2)
+			if sub == "import" {
+				src, name = arg(1), arg(2)
+				if name == "" {
+					name = strings.TrimSuffix(filepath.Base(strings.TrimPrefix(src, "lospec:")), filepath.Ext(src))
+				}
+			}
+			if name == "" || src == "" {
+				return errors.New("usage: termo palettes add NAME '#hex,#hex,…'  |  termo palettes import FILE|URL|lospec:NAME [NAME]")
+			}
+			text := src
+			if sub == "import" {
+				t, err := app.FetchText(src)
+				if err != nil {
+					return err
+				}
+				text = t
+			}
+			cols, err := engine.ParsePaletteText(text)
+			if err != nil {
+				return err
+			}
+			if err := lib.SavePalette(name, cols); err != nil {
+				return err
+			}
+			fmt.Printf("saved palette %s (%d colors)\n", name, len(cols))
+		case "rm", "delete", "del":
+			if err := lib.Delete("palette", arg(1)); err != nil {
+				return err
+			}
+			fmt.Println("deleted", arg(1))
+		case "export", "show":
+			cols, ok := engine.FindPalette(arg(1))
+			if !ok {
+				return fmt.Errorf("no palette named %q", arg(1))
+			}
+			for _, col := range cols {
+				fmt.Println(strings.TrimPrefix(col.Hex(), "#"))
+			}
+		default:
+			return fmt.Errorf("unknown palettes command %q (list, add, import, rm, export)", sub)
+		}
+		return nil
+	}
+	only := ""
+	if len(c.args) > 1 {
+		only = strings.ToLower(c.args[1])
+	}
+	return listPalettes(c, only)
+}
+
+// cmdCharsets lists the ASCII ramps, or manages the user's own:
+// add NAME CHARS · gen NAME POOL [COUNT] · rm NAME
+func cmdCharsets(c *cli, lib *app.Library) error {
+	arg := func(i int) string {
+		if len(c.args) > i {
+			return c.args[i]
+		}
+		return ""
+	}
+	switch sub := arg(0); sub {
+	case "", "list", "ls":
+		for _, cs := range engine.AllCharsets() {
+			if cs.Name != "custom" {
+				fmt.Printf("  %-14s %3d  |%s|\n", cs.Name, len(cs.Runes), string(cs.Runes))
+			}
+		}
+		fmt.Println("\nGenerator pools (termo charsets gen NAME POOL [COUNT]):", strings.Join(engine.GlyphSetNames(), ", "))
+	case "add":
+		if arg(1) == "" || arg(2) == "" {
+			return errors.New("usage: termo charsets add NAME 'CHARS'   (emptiest character first; --sort orders them for you)")
+		}
+		chars := arg(2)
+		if c.has("sort") {
+			chars = engine.SortByDensity(chars)
+		}
+		if err := lib.SaveCharset(arg(1), chars); err != nil {
+			return err
+		}
+		fmt.Printf("saved charset %s |%s|\n", arg(1), chars)
+	case "gen":
+		n := 12
+		if v, err := strconv.Atoi(arg(3)); err == nil {
+			n = v
+		}
+		if arg(1) == "" || arg(2) == "" {
+			return errors.New("usage: termo charsets gen NAME POOL [COUNT]")
+		}
+		chars := engine.GenCharset(arg(2), n, c.has("random"), rand.New(rand.NewSource(time.Now().UnixNano())))
+		if err := lib.SaveCharset(arg(1), chars); err != nil {
+			return err
+		}
+		fmt.Printf("saved charset %s |%s|\n", arg(1), chars)
+	case "rm", "delete", "del":
+		if err := lib.Delete("charset", arg(1)); err != nil {
+			return err
+		}
+		fmt.Println("deleted", arg(1))
+	default:
+		return fmt.Errorf("unknown charsets command %q (list, add, gen, rm)", sub)
+	}
+	return nil
+}
+
+func cmdThemes(c *cli, lib *app.Library) error {
+	depth, err := c.depth()
+	if err != nil {
+		return err
+	}
+	for _, t := range lib.AllThemes() {
+		tag := "user"
+		if t.Builtin {
+			tag = "built-in"
+		}
+		fmt.Printf("  %-14s %-9s %s\n", t.Name, tag, swatches(t.RGBs(), depth))
+	}
+	return nil
+}
+
+// listPalettes prints the palettes by family. only narrows the list to one
+// family or to the names that contain it.
+func listPalettes(c *cli, only string) error {
 	depth, err := c.depth()
 	if err != nil {
 		return err
@@ -498,7 +747,7 @@ func cmdPalettes(c *cli) error {
 	show := term.IsTerminal(int(os.Stdout.Fd()))
 	line := func(name string, colors []engine.RGB) {
 		if show && len(colors) <= 32 {
-			fmt.Printf("  %-12s %3d  %s\n", name, len(colors), swatches(colors, depth))
+			fmt.Printf("  %-14s %3d  %s\n", name, len(colors), swatches(colors, depth))
 			return
 		}
 		var hex []string
@@ -509,12 +758,40 @@ func cmdPalettes(c *cli) error {
 			}
 			hex = append(hex, col.Hex())
 		}
-		fmt.Printf("  %-12s %3d  %s\n", name, len(colors), strings.Join(hex, " "))
+		fmt.Printf("  %-14s %3d  %s\n", name, len(colors), strings.Join(hex, " "))
 	}
-	fmt.Println("Named palettes (--palette NAME):")
-	for _, p := range engine.NamedPalettes {
-		line(p.Name, p.Colors)
+	all := engine.AllPalettes()
+	families := append([][2]string{{"", "yours"}}, engine.PaletteFamilies()...)
+	shown := 0
+	for _, f := range families {
+		head := false
+		for _, p := range all {
+			tag := ""
+			if engine.IsBuiltinPalette(p.Name) {
+				tag = engine.PaletteTag(p.Name)
+			}
+			if tag != f[0] || (only != "" && only != tag && !strings.Contains(strings.ToLower(p.Name), only)) {
+				continue
+			}
+			if !head {
+				title := f[0]
+				if title == "" {
+					title = "user"
+				}
+				fmt.Printf("%s — %s:\n", title, f[1])
+				head = true
+			}
+			line(p.Name, p.Colors)
+			shown++
+		}
 	}
+	if only != "" {
+		if shown == 0 {
+			return fmt.Errorf("no palette or palette family matches %q", only)
+		}
+		return nil
+	}
+	fmt.Printf("\n%d named palettes (--palette NAME; termo palettes list FAMILY shows one family).\n", shown)
 	fmt.Println("\nGenerated palettes:")
 	fmt.Println("  truecolor         no palette, full 24-bit color")
 	fmt.Println("  harmony           color-theory palette: --scheme, --hue, --chroma, --lmin, --lmax, --colors")
@@ -635,6 +912,40 @@ func cmdPresets(c *cli, store *app.Store) error {
 	return nil
 }
 
+// cmdKeys prints the keys of the player: every bind mode and the keys that
+// work in all of them, or one of those sections.
+func cmdKeys(c *cli) error {
+	want := ""
+	if len(c.args) > 0 {
+		want = strings.ToLower(c.args[0])
+	}
+	found := false
+	for _, sec := range app.KeyTable() {
+		if want != "" && want != sec.Name {
+			continue
+		}
+		if found {
+			fmt.Println()
+		}
+		found = true
+		if sec.About != "" {
+			fmt.Printf("%s keys (--keys %s) — %s\n", strings.ToUpper(sec.Name), sec.Name, sec.About)
+		} else {
+			fmt.Println("In every mode")
+		}
+		for _, l := range sec.Lines {
+			fmt.Printf("  %-24s %s\n", l[0], l[1])
+		}
+	}
+	if !found {
+		return fmt.Errorf("unknown key set %q (%s, core)", want, strings.Join(app.ModeNames(), ", "))
+	}
+	if want == "" {
+		fmt.Println("\nTab and Shift+Tab step through the modes; Alt+1 … Alt+5 pick one.")
+	}
+	return nil
+}
+
 func usage(w io.Writer) {
 	fmt.Fprintf(w, `termo %s — play GIFs and videos in the terminal as ASCII / ANSI art
 
@@ -643,9 +954,18 @@ Usage:
   termo snap  [options] <file>      print a single frame (--at SEC, --size COLSxROWS)
   termo bench [options] <file>      measure render speed (--frames N, --size, --all)
   termo info  <file>                show stream information
+  termo find  [words…]              search the web for media: browse, preview, play, download
+  termo search [--site S] words…    print search results (youtube, giphy, tenor, pinterest, archive, wikimedia)
+  termo get [--as FORMAT] <link | words…>   download a link or the best match (mp4, webm, gif, mp3, wav…)
+  termo <link>                      play a YouTube / web link without saving it
   termo presets [list|show|save|edit|rename|rm|path] [name]
-  termo palettes                    list palettes and color schemes
+  termo palettes [list FAMILY|add|import|rm|export]   list palettes, or manage your own
+  termo charsets [add|gen|rm]       list ASCII ramps, or manage your own
+  termo themes                      list interface themes
+  termo sounds                      list sound presets (--sound NAME starts with one)
+  termo effects                     list effect presets and filters (--fx NAME, --filter NAME)
   termo options                     list every look option with its values
+  termo keys [MODE]                 list the keys of the player (play, video, color, fx, audio, core)
 
 Common options (termo options lists all of them):
   -m, --mode MODE        half | quad | sextant | braille | ascii
@@ -654,18 +974,25 @@ Common options (termo options lists all of them):
       --scheme NAME      color-theory scheme for --palette harmony
   -d, --dither NAME      none | bayer4 | bluenoise | halftone | floyd-steinberg | atkinson | …
   -P, --preset NAME      start from a preset
+      --fx NAME          put an effect preset on top: vhs-tape | crt-tv | anaglyph-3d | glitch-heavy | …
+      --filter NAME      color grade: mono | sepia | noir | xpro | polaroid | thermal | night-vision | …
   -r, --random           start with a randomized look (--seed N to repeat it)
   -f, --fps N            cap the frame rate (default: source rate)
   -s, --start SEC        start position
       --loop / --no-loop loop playback (default: on for clips without sound)
       --volume V  --mute  --no-audio  --speed X
       --hud auto|on|off  --stats  --depth 24|8|4  --hwaccel
+      --keys MODE        bind mode to start in: play | video | color | fx | audio
 
 In the player:
-  Space pause · ←/→ seek · ↑/↓ volume · r RANDOMIZE look · R random palette · u undo
-  Tab or s settings menu (presets: save, load, edit, rename, delete) · p/P cycle presets
-  v/d/c cycle mode/dither/palette · ? all keys · q quit
-  Mouse: click = pause, right-click = menu, wheel = volume, drag the seek bar and sliders.
+  Space pause · ←/→ seek · ↑/↓ volume · u undo · q quit · these work everywhere
+  Tab / Shift+Tab switch the bind mode: PLAY · VIDEO · COLOR · FX · AUDIO (Alt+1 … Alt+5).
+  The letters belong to the mode, and the bar shows them in its color. In every mode:
+  r random · p/P presets · a letter = up, its capital = down · = / - repeat it · Enter the
+  mode's panel · Backspace reset.
+  F1 keys · F2 picture · F3 adjust · F4 effects · F5 sound · F6 sound fx · F7 presets
+  F8 palettes · F9 find media · F10 playlist & downloads · F11 playback · F12 preferences
+  Mouse: click = pause, right-click = panel, wheel = volume; everything on the bars clicks.
 
 Presets are stored in %s
 `, version, app.StorePath())

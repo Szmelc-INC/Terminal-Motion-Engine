@@ -151,30 +151,8 @@ type NamedPalette struct {
 	Colors []RGB
 }
 
-// NamedPalettes lists the built-in palettes in menu order.
-var NamedPalettes = []NamedPalette{
-	{"1bit", hexes("000000 ffffff")},
-	{"paper", hexes("f5f0e1 1c1c1c")},
-	{"gameboy", hexes("0f380f 306230 8bac0f 9bbc0f")},
-	{"cga", hexes("000000 55ffff ff55ff ffffff")},
-	{"cga-hot", hexes("000000 55ff55 ff5555 ffff55")},
-	{"amber", hexes("000000 331a00 663300 995200 cc7a00 ffb000 ffd27f")},
-	{"matrix", hexes("000000 003b00 008f11 00ff41 afffaf")},
-	{"sepia", hexes("1a1208 3d2b17 6b4c2a a07a4a d1ab78 f1dcb3")},
-	{"ice", hexes("03045e 023e8a 0077b6 0096c7 00b4d8 48cae4 90e0ef caf0f8")},
-	{"sunset", hexes("1b1031 4b1d52 8c2f5b c94f4f f08a4b f9c74f fff3b0")},
-	{"vaporwave", hexes("1a1033 2d1b69 7b2cbf ff71ce 01cdfe 05ffa1 b967ff fffb96")},
-	{"cyberpunk", hexes("0d0221 261447 541388 d100d1 f706cf 00f0ff fcee0c ffffff")},
-	{"pico8", hexes("000000 1d2b53 7e2553 008751 ab5236 5f574f c2c3c7 fff1e8 ff004d ffa300 ffec27 00e436 29adff 83769c ff77a8 ffccaa")},
-	{"c64", hexes("000000 ffffff 880000 aaffee cc44cc 00cc55 0000aa eeee77 dd8855 664400 ff7777 333333 777777 aaff66 0088ff bbbbbb")},
-	{"zx", hexes("000000 0000d7 d70000 d700d7 00d700 00d7d7 d7d700 d7d7d7 0000ff ff0000 ff00ff 00ff00 00ffff ffff00 ffffff")},
-	{"apple2", hexes("000000 6c2940 403578 d93cf0 135740 808080 2697f0 bfb4f8 404b07 d9680f eca8bf 26c30f bfca87 93d6bf ffffff")},
-	{"nord", hexes("2e3440 3b4252 434c5e 4c566a d8dee9 e5e9f0 eceff4 8fbcbb 88c0d0 81a1c1 5e81ac bf616a d08770 ebcb8b a3be8c b48ead")},
-	{"gruvbox", hexes("282828 cc241d 98971a d79921 458588 b16286 689d6a a89984 928374 fb4934 b8bb26 fabd2f 83a598 d3869b 8ec07c ebdbb2")},
-	{"dracula", hexes("282a36 44475a f8f8f2 6272a4 8be9fd 50fa7b ffb86c ff79c6 bd93f9 ff5555 f1fa8c")},
-	{"solarized", hexes("002b36 073642 586e75 657b83 839496 93a1a1 eee8d5 fdf6e3 b58900 cb4b16 dc322f d33682 6c71c4 268bd2 2aa198 859900")},
-	{"catppuccin", hexes("1e1e2e 313244 45475a 585b70 cdd6f4 f5e0dc f5c2e7 cba6f7 f38ba8 fab387 f9e2af a6e3a1 94e2d5 89dceb 89b4fa b4befe")},
-}
+// NamedPalettes lists the built-in palettes in menu order (see builtins.go).
+var NamedPalettes = builtinPalettes()
 
 // Palette kinds that are generated rather than looked up by name.
 const (
@@ -191,7 +169,7 @@ const (
 // PaletteChoices lists every value the palette option accepts.
 func PaletteChoices() []string {
 	out := []string{PalOff, PalHarmony, PalAdaptive, PalGray, PalCube, PalAnsi16, PalXterm, PalCustom}
-	for _, n := range NamedPalettes {
+	for _, n := range AllPalettes() {
 		out = append(out, n.Name)
 	}
 	return out
@@ -482,10 +460,8 @@ func PaletteColors(l *Look, sample []byte) []RGB {
 		}
 		return out
 	}
-	for _, np := range NamedPalettes {
-		if np.Name == l.Palette {
-			return np.Colors
-		}
+	if c, ok := FindPalette(l.Palette); ok && len(c) > 0 {
+		return c
 	}
 	return nil
 }
@@ -501,7 +477,7 @@ func paletteKey(l *Look) string {
 	case PalCustom:
 		return "c/" + strings.Join(l.Custom, ",")
 	}
-	return l.Palette
+	return fmt.Sprintf("%s/%d", l.Palette, libGen)
 }
 
 // RandomHarmony fills in the harmony fields of a look with a random but

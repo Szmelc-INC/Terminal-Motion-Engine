@@ -11,8 +11,6 @@ import (
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/tty"
 )
 
-const cBtn uint32 = 0x24283b
-
 // Prompt is a one-line text input dialog.
 type Prompt struct {
 	title, hint string
@@ -23,7 +21,7 @@ type Prompt struct {
 
 func (p *Prompt) draw(a *App) {
 	s := a.scr
-	w := min(56, s.W)
+	w, _ := a.dim(56, 6)
 	x, y := a.window(p.title, w, 6)
 	a.on(0, 0, s.W, s.H, func(tty.Event, int, int) {})
 	if p.hint != "" {
@@ -36,7 +34,7 @@ func (p *Prompt) draw(a *App) {
 		first = p.cur - fw + 1
 	}
 	for i := 0; i < fw; i++ {
-		c := tty.Cell{Ch: ' ', Fg: 0xffffff, Bg: cBar}
+		c := tty.Cell{Ch: ' ', Fg: cFg, Bg: cBar}
 		if first+i < len(p.buf) {
 			c.Ch = p.buf[first+i]
 		}
@@ -141,7 +139,7 @@ var MediaExts = map[string]bool{
 	".mp4": true, ".mkv": true, ".webm": true, ".avi": true, ".mov": true, ".wmv": true, ".flv": true,
 	".mpg": true, ".mpeg": true, ".m4v": true, ".ts": true, ".mts": true, ".m2ts": true, ".ogv": true,
 	".3gp": true, ".gif": true, ".apng": true, ".png": true, ".jpg": true, ".jpeg": true, ".bmp": true,
-	".webp": true,
+	".webp": true, ".m3u8": true,
 }
 
 type bitem struct {
@@ -156,6 +154,13 @@ type Browser struct {
 	sel    int
 	scroll int
 	err    string
+}
+
+// openBrowserAt opens the file browser on a folder.
+func (a *App) openBrowserAt(dir string) {
+	b := &Browser{}
+	b.load(dir)
+	a.browser = b
 }
 
 func (a *App) openBrowser() {
@@ -249,13 +254,13 @@ func (b *Browser) activate(a *App) {
 		files = append(files, filepath.Join(b.dir, x.name))
 	}
 	a.files = files
-	a.browser = nil
+	a.browser, a.finderOpen = nil, false
 	a.open(idx, 0)
 }
 
 func (b *Browser) draw(a *App) {
 	s := a.scr
-	w, h := min(72, s.W), min(24, s.H)
+	w, h := a.dim(72, 24)
 	x, y := a.window("Open — "+tty.Clean(b.dir), w, h)
 	a.on(0, 0, s.W, s.H, func(tty.Event, int, int) {})
 	listH := h - 3

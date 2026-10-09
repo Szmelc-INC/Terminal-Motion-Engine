@@ -34,6 +34,13 @@ const (
 	KeyF3
 	KeyF4
 	KeyF5
+	KeyF6
+	KeyF7
+	KeyF8
+	KeyF9
+	KeyF10
+	KeyF11
+	KeyF12
 	KeyCtrlC
 	KeyCtrlS
 	KeyCtrlL
@@ -210,6 +217,11 @@ func decode(b []byte, flush bool) (Event, int) {
 		return key(KeyCtrlS), 1
 	case c == 0x0c:
 		return key(KeyCtrlL), 1
+	case c == 0x00:
+		return Event{Type: EvKey, Key: KeyRune, Rune: ' ', Ctrl: true}, 1
+	case c >= 0x1c && c < 0x20:
+		// Ctrl+\ ] ^ and Ctrl+- (which terminals send as Ctrl+_).
+		return Event{Type: EvKey, Key: KeyRune, Rune: []rune{'\\', ']', '^', '-'}[c-0x1c], Ctrl: true}, 1
 	case c < 0x20:
 		return Event{Type: EvKey, Key: KeyRune, Rune: rune(c) + 'a' - 1, Ctrl: true}, 1
 	}
@@ -245,6 +257,7 @@ func decodeCSI(b []byte, flush bool) (Event, int) {
 	}
 	var params []int
 	for _, f := range strings.Split(body, ";") {
+		f, _, _ = strings.Cut(f, ":") // drop kitty sub-parameters
 		v, _ := strconv.Atoi(strings.TrimLeft(f, "?>="))
 		params = append(params, v)
 	}
@@ -252,6 +265,14 @@ func decodeCSI(b []byte, flush bool) (Event, int) {
 	if len(params) >= 2 && params[1] > 1 {
 		m := params[1] - 1
 		ev.Shift, ev.Alt, ev.Ctrl = m&1 != 0, m&2 != 0, m&4 != 0
+	}
+	if final == 'u' {
+		// Kitty keyboard protocol: CSI code ; modifiers u
+		return keyFromCode(ev, params[0]), n
+	}
+	if final == '~' && params[0] == 27 && len(params) >= 3 {
+		// xterm modifyOtherKeys: CSI 27 ; modifiers ; code ~
+		return keyFromCode(ev, params[2]), n
 	}
 	switch final {
 	case 'A':
@@ -298,9 +319,63 @@ func decodeCSI(b []byte, flush bool) (Event, int) {
 			ev.Key = KeyF4
 		case 15:
 			ev.Key = KeyF5
+		case 17:
+			ev.Key = KeyF6
+		case 18:
+			ev.Key = KeyF7
+		case 19:
+			ev.Key = KeyF8
+		case 20:
+			ev.Key = KeyF9
+		case 21:
+			ev.Key = KeyF10
+		case 23:
+			ev.Key = KeyF11
+		case 24:
+			ev.Key = KeyF12
 		}
 	}
 	return ev, n
+}
+
+// keyFromCode turns a Unicode key code reported by the kitty protocol (or
+// modifyOtherKeys) into an event; ev already carries the modifiers.
+func keyFromCode(ev Event, code int) Event {
+	switch code {
+	case 27:
+		ev.Key = KeyEsc
+	case 13, 57414:
+		ev.Key = KeyEnter
+	case 9:
+		ev.Key = KeyTab
+		if ev.Shift {
+			ev.Key = KeyBackTab
+		}
+	case 127, 8:
+		ev.Key = KeyBackspace
+	case 57413: // keypad +
+		ev.Key, ev.Rune = KeyRune, '+'
+	case 57412: // keypad -
+		ev.Key, ev.Rune = KeyRune, '-'
+	case 57399: // keypad 0
+		ev.Key, ev.Rune = KeyRune, '0'
+	default:
+		if code < 0x20 || (code >= 57344 && code <= 63743) {
+			return key(KeyNone) // modifier keys and other private-use codes
+		}
+		ev.Key, ev.Rune = KeyRune, rune(code)
+		if ev.Ctrl && !ev.Alt && !ev.Shift {
+			switch code {
+			case 'c':
+				return key(KeyCtrlC)
+			case 's':
+				return key(KeyCtrlS)
+			case 'l':
+				return key(KeyCtrlL)
+			}
+		}
+	}
+	return ev
 }
 
 func decodeMouse(body string, release bool) Event {

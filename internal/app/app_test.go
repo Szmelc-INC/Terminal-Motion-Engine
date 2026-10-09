@@ -107,6 +107,11 @@ func TestStoreOldFileGetsDefaults(t *testing.T) {
 	if p.Look.Mode != "ascii" || p.Look.Contrast != 1 || p.Look.Gamma != 1 || p.Look.Dither == "" {
 		t.Errorf("missing fields were not defaulted: %+v", p.Look)
 	}
+	// Settings added later: a zero white point would wash every old preset
+	// out, and the effects must all be off.
+	if p.Look.White != 1 || p.Look.FX != engine.DefaultFX() {
+		t.Errorf("an old preset must get the defaults of the newer settings: %+v", p.Look)
+	}
 	os.WriteFile(path, []byte(`{not json`), 0o644)
 	if _, err := LoadStore(path); err == nil {
 		t.Error("corrupt file should be reported")

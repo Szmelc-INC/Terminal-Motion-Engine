@@ -47,18 +47,19 @@ func ParseHex(s string) (RGB, error) {
 	return FromU32(v), nil
 }
 
-var srgbLin [256]float64
-
-func init() {
-	for i := range srgbLin {
+// srgbLin is built by an initializer rather than an init function, so that
+// package-level palettes computed from colors can rely on it.
+var srgbLin = func() (t [256]float64) {
+	for i := range t {
 		c := float64(i) / 255
 		if c <= 0.04045 {
-			srgbLin[i] = c / 12.92
+			t[i] = c / 12.92
 		} else {
-			srgbLin[i] = math.Pow((c+0.055)/1.055, 2.4)
+			t[i] = math.Pow((c+0.055)/1.055, 2.4)
 		}
 	}
-}
+	return t
+}()
 
 func linToSrgb(f float64) float64 {
 	if f <= 0.0031308 {

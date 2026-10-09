@@ -90,8 +90,15 @@ type Renderer struct {
 	dith        ditherer
 	pal         *Palette
 	palKey      string
-	tone        [256]uint8
-	toneKey     [4]float64
+	tone        [3][256]uint8 // one curve per color channel
+	toneKey     [13]float64
+	toneOK      bool
+
+	// Scratch for the effects.
+	tmp, tmp2, soft []byte
+	shift           []int
+	prev            []byte // the previous frame, for trails and interlacing
+	prevOK          bool
 }
 
 // Palette returns the palette used for the last rendered frame, or nil when
@@ -110,23 +117,41 @@ func (r *Renderer) buildTone(l *Look) {
 	if l.Invert {
 		inv = 1
 	}
-	key := [4]float64{l.Brightness, l.Contrast, l.Gamma, inv}
-	if key == r.toneKey && r.tone[255] != r.tone[0] {
+	key := [13]float64{l.Brightness, l.Contrast, l.Gamma, inv, l.Exposure, l.Black, l.White, l.Shadows, l.Highlights,
+		l.Fade, l.Temperature, l.Tint}
+	if key == r.toneKey && r.toneOK {
 		return
 	}
-	r.toneKey = key
+	r.toneKey, r.toneOK = key, true
 	g := l.Gamma
 	if g <= 0 {
 		g = 1
 	}
-	for i := range r.tone {
-		v := (float64(i)/255-0.5)*l.Contrast + 0.5 + l.Brightness
-		v = math.Max(0, math.Min(1, v))
-		v = math.Pow(v, 1/g)
-		if l.Invert {
-			v = 1 - v
+	white := l.White
+	if white <= l.Black+0.02 {
+		white = l.Black + 0.02
+	}
+	gain := math.Pow(2, l.Exposure)
+	// White balance: temperature trades red against blue, tint trades
+	// green against the two of them.
+	chGain := [3]float64{1 + 0.3*l.Temperature - 0.1*l.Tint, 1 + 0.2*l.Tint, 1 - 0.3*l.Temperature - 0.1*l.Tint}
+	for ch := 0; ch < 3; ch++ {
+		for i := 0; i < 256; i++ {
+			v := float64(i) / 255 * gain * chGain[ch]
+			v = (v - l.Black) / (white - l.Black)
+			v = (v-0.5)*l.Contrast + 0.5 + l.Brightness
+			v = math.Max(0, math.Min(1, v))
+			// Shadows and highlights each bend one end of the curve and
+			// leave black, white and the other end alone.
+			v += l.Shadows * 1.2 * v * (1 - v) * (1 - v)
+			v += l.Highlights * 1.2 * v * v * (1 - v)
+			v = math.Pow(math.Max(0, math.Min(1, v)), 1/g)
+			v = l.Fade*0.22 + v*(1-l.Fade*0.34)
+			if l.Invert {
+				v = 1 - v
+			}
+			r.tone[ch][i] = uint8(math.Max(0, math.Min(1, v))*255 + 0.5)
 		}
-		r.tone[i] = uint8(v*255 + 0.5)
 	}
 }
 
@@ -147,10 +172,11 @@ func colorMatrix(sat, hueDeg float64) (m [9]int32, active bool) {
 	return m, true
 }
 
-func (r *Renderer) prepare(src []byte, w, h int, l *Look) {
+func (r *Renderer) prepare(src []byte, w, h int, l *Look, frame int) {
 	r.work = grow(r.work, w*h*3)
 	r.buildTone(l)
-	mat, useMat := colorMatrix(l.Saturation, l.HueShift)
+	mat, useMat := colorMatrix(l.Saturation, l.HueShift+l.HueCycle*float64(frame))
+	vib := int(l.Vibrance * 256)
 	tone := &r.tone
 	work := r.work
 	parallel(h, func(lo, hi int) {
@@ -174,8 +200,18 @@ func (r *Renderer) prepare(src []byte, w, h int, l *Look) {
 					gg = clamp8(int((mat[3]*ri + mat[4]*gi + mat[5]*bi) >> 12))
 					bb = clamp8(int((mat[6]*ri + mat[7]*gi + mat[8]*bi) >> 12))
 				}
+				if vib != 0 {
+					// Push each channel away from grey, the more so the
+					// less saturated the pixel already is.
+					mx, mn := max(rr, gg, bb), min(rr, gg, bb)
+					k := vib * (255 - int(mx-mn)) >> 8
+					y := int(Luma(rr, gg, bb))
+					rr = clamp8(int(rr) + (int(rr)-y)*k>>8)
+					gg = clamp8(int(gg) + (int(gg)-y)*k>>8)
+					bb = clamp8(int(bb) + (int(bb)-y)*k>>8)
+				}
 				d := drow[x*3 : x*3+3]
-				d[0], d[1], d[2] = tone[rr], tone[gg], tone[bb]
+				d[0], d[1], d[2] = tone[0][rr], tone[1][gg], tone[2][bb]
 			}
 		}
 	})
@@ -287,10 +323,11 @@ func (r *Renderer) Render(src []byte, w, h int, l *Look, dst []Cell, cols, rows,
 	if cols*sx != w || rows*sy != h || len(src) < w*h*3 || len(dst) < cols*rows {
 		return
 	}
-	r.prepare(src, w, h, l)
+	r.prepare(src, w, h, l, frame)
 	if l.Edges == "mono" || l.Edges == "color" {
 		r.edges(w, h, l)
 	}
+	r.applyFX(w, h, l, frame)
 	if cap(r.lvl) < w*h {
 		r.lvl = make([]uint8, w*h)
 	}

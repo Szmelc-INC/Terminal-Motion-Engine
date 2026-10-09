@@ -9,21 +9,6 @@ import (
 	"github.com/Szmelc-INC/Terminal-Motion-Engine/internal/tty"
 )
 
-// Theme.
-const (
-	cBar    uint32 = 0x16161e
-	cPanel  uint32 = 0x1a1b26
-	cFg     uint32 = 0xc0caf5
-	cDim    uint32 = 0x565f89
-	cAccent uint32 = 0x7aa2f7
-	cSel    uint32 = 0x283457
-	cHot    uint32 = 0x3b4261
-	cGreen  uint32 = 0x9ece6a
-	cYellow uint32 = 0xe0af68
-	cRed    uint32 = 0xf7768e
-	cTrack  uint32 = 0x414868
-)
-
 func fmtTime(t float64) string {
 	if t < 0 {
 		t = 0
@@ -49,12 +34,13 @@ func clicked(ev tty.Event) bool {
 
 // button draws a clickable label and returns its width.
 func (a *App) button(x, y int, label string, fg, bg uint32, fn func(ev tty.Event)) int {
-	w := len([]rune(label)) + 2
+	pad := 1 + a.pad()
+	w := len([]rune(label)) + 2*pad
 	if a.hover(x, y, w, 1) {
 		bg = cHot
 	}
 	a.scr.Fill(x, y, w, 1, tty.Cell{Ch: ' ', Bg: bg})
-	a.scr.Text(x+1, y, label, fg, bg, 0, -1)
+	a.scr.Text(x+pad, y, label, fg, bg, 0, -1)
 	a.on(x, y, w, 1, func(ev tty.Event, _, _ int) { fn(ev) })
 	return w
 }
@@ -71,7 +57,7 @@ func (a *App) slider(x, y, w int, frac float64, fg, bg uint32) {
 			c.Ch, c.Fg = '─', cTrack
 		}
 		if i == knob {
-			c.Ch, c.Fg = '●', 0xffffff
+			c.Ch, c.Fg = '●', cFg
 		}
 		a.scr.Set(x+i, y, c)
 	}
@@ -99,7 +85,7 @@ func (a *App) hudVisible() bool {
 		return false
 	}
 	paused := !a.isPlaying() && !a.info.Still
-	return paused || a.menu != nil || time.Since(a.lastActivity) < 2500*time.Millisecond
+	return paused || a.menu != nil || a.finderOpen || time.Since(a.lastActivity) < 2500*time.Millisecond
 }
 
 func (a *App) draw() {
@@ -110,9 +96,13 @@ func (a *App) draw() {
 	}
 	a.hits = a.hits[:0]
 	a.on(0, 0, s.W, s.H, a.videoMouse)
-	a.hudShown = a.hudVisible()
+	a.hudShown, a.hintY = a.hudVisible(), -1
 	if a.hudShown && s.H >= 6 {
-		a.drawHUD()
+		if a.ui == 0 {
+			a.drawMiniHUD()
+		} else {
+			a.drawHUD()
+		}
 	}
 	if a.stats {
 		a.drawStats()
@@ -120,11 +110,20 @@ func (a *App) draw() {
 	if a.menu != nil {
 		a.menu.draw(a)
 	}
+	if a.finder != nil {
+		a.finder.draw(a)
+	}
 	if a.browser != nil {
 		a.browser.draw(a)
 	}
-	if a.help {
-		a.drawHelp()
+	if _, bottom := a.desk(); a.hintY >= 0 && a.curF() >= 0 && bottom == a.hintY {
+		// After the windows, so that the one in front cannot keep the
+		// clicks from it. A terminal too small to keep a row free for it
+		// goes without.
+		a.drawFKeys(a.hintY)
+	}
+	if a.form != nil {
+		a.form.draw(a)
 	}
 	if a.prompt != nil {
 		a.prompt.draw(a)
@@ -141,7 +140,11 @@ func (a *App) draw() {
 		if s.H < 4 {
 			y = 0
 		}
-		s.Text((s.W-len(msg))/2, y, string(msg), 0x1a1b26, cYellow, engine.AttrBold, -1)
+		bg := cYellow
+		if a.toastTint {
+			bg = a.tint()
+		}
+		s.Text((s.W-len(msg))/2, y, string(msg), cBar, bg, engine.AttrBold, -1)
 	}
 	n, _ := s.Flush()
 	a.flushBytes += (float64(n) - a.flushBytes) * 0.1
@@ -154,7 +157,10 @@ func (a *App) drawHUD() {
 
 	// Title bar.
 	s.Fill(0, 0, W, 1, tty.Cell{Ch: ' ', Bg: cBar})
-	x := 1 + s.Text(1, 0, "termo", cAccent, cBar, engine.AttrBold, -1)
+	a.on(0, 0, W, 1, func(tty.Event, int, int) {})
+	tint := a.tint()
+	x := 2 + s.Text(1, 0, "termo", tint, cBar, engine.AttrBold, -1)
+	x = a.drawModes(x, 0)
 	title := " · " + a.title()
 	if len(a.files) > 1 {
 		title += fmt.Sprintf("  [%d/%d]", a.fileIdx+1, len(a.files))
@@ -162,19 +168,37 @@ func (a *App) drawHUD() {
 	if a.loaded {
 		title += fmt.Sprintf("  %dx%d %.4g fps", a.info.Width, a.info.Height, a.info.FPS)
 	}
+	if n := a.activeDownloads(); n > 0 {
+		title += fmt.Sprintf("  ↓ %d downloading", n)
+	}
 	x += s.Text(x, 0, title, cFg, cBar, 0, W-x-1)
-	right := Summary(a.s.Look)
+	// The look on the right, with as much detail as fits.
+	base, lead := Summary(a.s.Look), ""
 	if a.preset != "" {
-		right = "◆ " + a.preset + "  " + right
+		lead = "◆ " + a.preset + "  "
 	}
-	if rw := len([]rune(right)); x+rw+3 < W {
-		s.Text(W-rw-1, 0, right, cDim, cBar, 0, -1)
+	plain := a.s.Look
+	plain.FX = engine.DefaultFX()
+	for _, right := range []string{lead + base, lead + Summary(plain), Summary(plain)} {
+		if rw := len([]rune(right)); x+rw+3 < W {
+			s.Text(W-rw-1, 0, right, cDim, cBar, 0, -1)
+			break
+		}
 	}
-	a.on(0, 0, W, 1, func(tty.Event, int, int) {})
 
-	// Seek bar.
+	// Seek bar. Large interface sizes put blank rows around it.
+	pad := a.pad()
+	top := H - 2 - pad
+	s.Fill(0, top, W, 2+pad, tty.Cell{Ch: ' ', Bg: cBar})
+	a.on(0, top, W, 2+pad, func(tty.Event, int, int) {})
+	if a.prefs.Hints && H >= 10 && W >= 40 {
+		a.hintY = top - 1
+		a.drawHints(a.hintY)
+	}
 	y := H - 2
-	s.Fill(0, y, W, 2, tty.Cell{Ch: ' ', Bg: cBar})
+	if pad >= 2 {
+		y = H - 3
+	}
 	pos, dur := a.pos(), a.info.Duration
 	left := " " + fmtTime(pos) + " "
 	rightT := " " + fmtTime(dur) + " "
@@ -191,11 +215,11 @@ func (a *App) drawHUD() {
 	if frac > 1 {
 		frac = 1
 	}
-	a.slider(bx, y, bw, frac, cAccent, cBar)
+	a.slider(bx, y, bw, frac, tint, cBar)
 	if a.hover(bx, y, bw, 1) && dur > 0 {
 		tip := " " + fmtTime(sliderFrac(a.mx-bx, bw)*dur) + " "
 		tx := max(0, min(W-len(tip), a.mx-len(tip)/2))
-		s.Text(tx, y-1, tip, 0x1a1b26, cAccent, 0, -1)
+		s.Text(tx, y-1, tip, cBar, tint, 0, -1)
 	}
 	a.on(0, y, W, 1, func(ev tty.Event, rx, _ int) {
 		switch ev.Action {
@@ -271,52 +295,42 @@ func (a *App) drawHUD() {
 		})
 		x += vw + 1
 		x += s.Text(x, y, fmt.Sprintf("%3.0f%%", a.s.Volume*100), cDim, cBar, 0, -1) + 1
-	}
-
-	// Right-aligned buttons; dropped from the left when space runs out.
-	type btn struct {
-		label string
-		fg    uint32
-		fn    func(ev tty.Event)
-	}
-	cycle := func(key string) func(ev tty.Event) {
-		return func(ev tty.Event) {
-			switch {
-			case clicked(ev), ev.Action == tty.MouseWheelDown:
-				a.nudge(key, 1)
-			case ev.Action == tty.MousePress && ev.Button == tty.ButtonRight, ev.Action == tty.MouseWheelUp:
-				a.nudge(key, -1)
+		if W >= 110 && a.s.Sound.SoundActive() && modes[a.mode].name != "audio" {
+			label := "♪ " + engine.SoundSummary(a.s.Sound)
+			if a.soundName != "" {
+				label = "♪ " + a.soundName
 			}
+			if r := []rune(label); len(r) > 26 {
+				label = string(r[:25]) + "…"
+			}
+			x += a.button(x, y, label, cYellow, cBar, func(ev tty.Event) {
+				if clicked(ev) {
+					a.openPanel("presets", 1)
+				}
+			})
 		}
 	}
-	btns := []btn{
-		{a.s.Mode, cFg, cycle("mode")},
-		{a.s.Dither, cFg, cycle("dither")},
-		{a.s.Palette, cFg, cycle("palette")},
-		{"⚄ random", cYellow, func(ev tty.Event) {
-			if clicked(ev) {
-				a.randomize(false)
-			} else if ev.Action == tty.MousePress && ev.Button == tty.ButtonRight {
-				a.undo()
-			}
-		}},
-		{"☰ menu", cAccent, func(ev tty.Event) {
+
+	// Right-aligned buttons: those of the mode, then the two that are always
+	// there. They are dropped from the left when space runs out.
+	btns := append(a.modeButtons(),
+		btn{"☰ menu", tint, func(ev tty.Event) {
 			if clicked(ev) {
 				a.toggleMenu(-1)
 			}
 		}},
-		{"?", cFg, func(ev tty.Event) {
+		btn{"?", cFg, func(ev tty.Event) {
 			if clicked(ev) {
-				a.help = !a.help
+				a.openF(0)
 			}
-		}},
-	}
+		}})
+	btnW := func(b btn) int { return len([]rune(b.label)) + 2 + 2*a.pad() }
 	total := 0
 	for _, b := range btns {
-		total += len([]rune(b.label)) + 2
+		total += btnW(b)
 	}
 	for len(btns) > 0 && x+total+1 > W {
-		total -= len([]rune(btns[0].label)) + 2
+		total -= btnW(btns[0])
 		btns = btns[1:]
 	}
 	rx := W - total - 1
@@ -349,41 +363,31 @@ func (a *App) drawStats() {
 	}
 }
 
-var helpText = [][2]string{
-	{"Space / k", "play / pause"},
-	{"← →   Shift+← →", "seek 5 s / 30 s"},
-	{", .", "previous / next frame"},
-	{"0-9   Home", "jump to 0-90 % / start"},
-	{"↑ ↓   m", "volume / mute"},
-	{"[ ]   l", "speed / loop"},
-	{"", ""},
-	{"r", "RANDOMIZE the whole look"},
-	{"R", "randomize palette only"},
-	{"u", "undo last change"},
-	{"Tab / s / F2", "settings menu"},
-	{"p P", "next / previous preset"},
-	{"Ctrl+S", "save look as preset"},
-	{"", ""},
-	{"v d c a", "cycle mode / dither / palette / charset"},
-	{"V D C A", "… backwards"},
-	{"- =", "fewer / more palette colors"},
-	{"f x y", "fit / flip X / flip Y"},
-	{"e i", "edges / invert"},
-	{"", ""},
-	{"h   g", "HUD auto·on·off / stats"},
-	{"o   n N", "open file / next · previous file"},
-	{"q  Ctrl+C", "quit"},
-	{"", ""},
-	{"Mouse", "click video = pause · right-click = menu"},
-	{"", "wheel = volume · drag bars and sliders"},
-	{"", "middle-click = randomize"},
-}
-
 func (a *App) window(title string, w, h int) (x, y int) {
 	s := a.scr
 	x, y = (s.W-w)/2, (s.H-h)/2
+	if top, bottom := a.desk(); h <= bottom-top {
+		y = top + (bottom-top-h)/2
+	}
 	a.frame(title, x, y, w, h)
 	return
+}
+
+// desk is the rows the big windows keep to, top to bottom-1, so that the
+// bars stay in sight under them. A small terminal gives them all of it.
+func (a *App) desk() (top, bottom int) {
+	s := a.scr
+	if !a.hudShown || a.ui == 0 || s.H < 6 {
+		return 0, s.H
+	}
+	top, bottom = 1, s.H-2-a.pad()
+	if a.hintY >= 0 {
+		bottom = a.hintY
+	}
+	if bottom-top < 18 {
+		return 0, s.H
+	}
+	return top, bottom
 }
 
 func (a *App) frame(title string, x, y, w, h int) {
@@ -391,30 +395,7 @@ func (a *App) frame(title string, x, y, w, h int) {
 	s.Dim(x+2, y+1, w, h)
 	s.Fill(x, y, w, h, tty.Cell{Ch: ' ', Fg: cFg, Bg: cPanel})
 	s.Fill(x, y, w, 1, tty.Cell{Ch: ' ', Bg: cSel})
-	s.Text(x+2, y, title, 0xffffff, cSel, engine.AttrBold, w-4)
-}
-
-func (a *App) drawHelp() {
-	w, h := 62, len(helpText)+3
-	if w > a.scr.W {
-		w = a.scr.W
-	}
-	if h > a.scr.H {
-		h = a.scr.H
-	}
-	x, y := a.window("Keys & mouse — press any key to close", w, h)
-	a.on(0, 0, a.scr.W, a.scr.H, func(ev tty.Event, _, _ int) {
-		if ev.Action == tty.MousePress {
-			a.help = false
-		}
-	})
-	for i, l := range helpText {
-		if i+2 >= h {
-			break
-		}
-		a.scr.Text(x+2, y+2+i, l[0], cYellow, cPanel, 0, 18)
-		a.scr.Text(x+21, y+2+i, l[1], cFg, cPanel, 0, w-23)
-	}
+	s.Text(x+2, y, title, cFg, cSel, engine.AttrBold, w-4)
 }
 
 // --- input -----------------------------------------------------------------
@@ -435,10 +416,14 @@ func (a *App) handle(ev tty.Event) {
 		a.confirm.key(a, ev)
 	case a.prompt != nil:
 		a.prompt.key(a, ev)
-	case a.help:
-		a.help = false
+	case a.form != nil:
+		a.form.key(a, ev)
+	case ev.Key >= tty.KeyF1 && ev.Key <= tty.KeyF12 && !ev.Ctrl && !ev.Alt && !ev.Shift:
+		a.openF(int(ev.Key - tty.KeyF1)) // the F keys work in every window
 	case a.browser != nil:
 		a.browser.key(a, ev)
+	case a.finder != nil && a.finderOpen:
+		a.finder.key(a, ev)
 	case a.menu != nil && a.menu.key(a, ev):
 	default:
 		a.playerKey(ev)
@@ -495,148 +480,18 @@ func (a *App) videoMouse(ev tty.Event, _, _ int) {
 		case tty.ButtonMiddle:
 			a.randomize(false)
 		}
-	case tty.MouseWheelUp:
-		a.nudge("volume", 1)
-	case tty.MouseWheelDown:
-		a.nudge("volume", -1)
-	}
-}
-
-func (a *App) toggleMenu(tab int) {
-	if a.menu != nil && (tab < 0 || tab == a.menu.tab) {
-		a.menu = nil
-		return
-	}
-	if a.menu == nil {
-		a.menu = newMenu()
-	}
-	if tab >= 0 {
-		a.menu.tab = tab
-	}
-}
-
-func (a *App) playerKey(ev tty.Event) {
-	switch ev.Key {
-	case tty.KeyLeft, tty.KeyRight:
-		d := 5.0
-		if ev.Shift || ev.Ctrl {
-			d = 30
+	case tty.MouseWheelUp, tty.MouseWheelDown:
+		d := 1
+		if ev.Action == tty.MouseWheelDown {
+			d = -1
 		}
-		if ev.Key == tty.KeyLeft {
-			d = -d
-		}
-		a.seekBy(d)
-	case tty.KeyUp:
-		a.nudge("volume", 1)
-	case tty.KeyDown:
-		a.nudge("volume", -1)
-	case tty.KeyHome:
-		a.seek(0)
-	case tty.KeyTab, tty.KeyF2:
-		a.toggleMenu(-1)
-	case tty.KeyF1:
-		a.help = true
-	case tty.KeyCtrlS:
-		a.savePresetPrompt()
-	case tty.KeyEsc:
-		if a.menu != nil {
-			a.menu = nil
-		}
-	case tty.KeyRune:
-		a.playerRune(ev.Rune)
-	}
-}
-
-func (a *App) playerRune(r rune) {
-	switch r {
-	case ' ', 'k':
-		a.setPlaying(!a.isPlaying())
-	case 'q', 'Q':
-		a.quit = true
-	case 'r':
-		a.randomize(false)
-	case 'R':
-		a.randomize(true)
-	case 'u', 'U':
-		a.undo()
-	case 's', 'S':
-		a.toggleMenu(-1)
-	case 'p':
-		a.cyclePreset(1)
-	case 'P':
-		a.cyclePreset(-1)
-	case 'v':
-		a.nudge("mode", 1)
-	case 'V':
-		a.nudge("mode", -1)
-	case 'd':
-		a.nudge("dither", 1)
-	case 'D':
-		a.nudge("dither", -1)
-	case 'c':
-		a.nudge("palette", 1)
-	case 'C':
-		a.nudge("palette", -1)
-	case 'a':
-		a.nudge("charset", 1)
-	case 'A':
-		a.nudge("charset", -1)
-	case '=', '+':
-		a.nudge("colors", 1)
-	case '-', '_':
-		a.nudge("colors", -1)
-	case 'f':
-		a.nudge("fit", 1)
-	case 'x':
-		a.nudge("flip-x", 1)
-	case 'y':
-		a.nudge("flip-y", 1)
-	case 'e':
-		a.nudge("edges", 1)
-	case 'i':
-		a.nudge("invert", 1)
-	case 'm':
-		a.nudge("mute", 1)
-	case 'l':
-		a.nudge("loop", 1)
-	case ']':
-		a.nudge("speed", 1)
-	case '[':
-		a.nudge("speed", -1)
-	case 'h':
-		a.hud = map[string]string{"auto": "on", "on": "off", "off": "auto"}[a.hud]
-		a.say("HUD: "+a.hud, time.Second)
-	case 'g':
-		a.stats = !a.stats
-	case '?':
-		a.help = true
-	case 'o':
-		a.openBrowser()
-	case 'n':
-		if len(a.files) > 1 {
-			a.open(a.fileIdx+1, 0)
-		}
-	case 'N':
-		if len(a.files) > 1 {
-			a.open(a.fileIdx-1, 0)
-		}
-	case '.':
-		if a.loaded && !a.info.Still {
-			if a.isPlaying() {
-				a.setPlaying(false)
-			}
-			a.needFrame = true
-		}
-	case ',':
-		if a.loaded {
-			if a.isPlaying() {
-				a.setPlaying(false)
-			}
-			a.seek(a.pos() - 1/a.fps())
-		}
-	default:
-		if r >= '0' && r <= '9' && a.info.Duration > 0 {
-			a.seek(a.info.Duration * float64(r-'0') / 10)
+		switch {
+		case ev.Ctrl:
+			a.zoom(d)
+		case ev.Alt:
+			a.setUI(a.ui + d)
+		default:
+			a.nudge("volume", d)
 		}
 	}
 }
@@ -655,6 +510,7 @@ func (a *App) savePreset(name string, askOverwrite bool) {
 		a.say(err.Error(), 2*time.Second)
 		return
 	}
+	name = strings.TrimSpace(name)
 	if p, ok := a.store.Find(name); ok && !p.Builtin && askOverwrite && !strings.EqualFold(name, a.preset) {
 		a.confirm = &Confirm{msg: fmt.Sprintf("Overwrite preset %q?", p.Name), yes: func() { a.savePreset(name, false) }}
 		return
@@ -664,5 +520,285 @@ func (a *App) savePreset(name string, askOverwrite bool) {
 		return
 	}
 	a.preset = name
+	pgPresets.selectName(a, name)
 	a.say("saved preset: "+name, 1500*time.Millisecond)
+}
+
+// drawMiniHUD is the compact interface size: one line at the bottom.
+func (a *App) drawMiniHUD() {
+	s := a.scr
+	W, y := s.W, s.H-1
+	s.Fill(0, y, W, 1, tty.Cell{Ch: ' ', Bg: cBar})
+	a.on(0, y, W, 1, func(tty.Event, int, int) {})
+	play := "▶"
+	if a.isPlaying() {
+		play = "▮▮"
+	}
+	x := a.button(0, y, play, cGreen, cBar, func(ev tty.Event) {
+		if clicked(ev) {
+			a.setPlaying(!a.isPlaying())
+		}
+	})
+	pos, dur := a.pos(), a.info.Duration
+	// The mode, in its color: click or scroll to change it.
+	chip := strings.ToUpper(modes[a.mode].name) + " "
+	a.on(x, y, len(chip), 1, a.modeMouse(a.mode+1))
+	x += s.Text(x, y, chip, a.tint(), cBar, engine.AttrBold, -1)
+	x += s.Text(x, y, fmtTime(pos)+" ", cFg, cBar, 0, -1)
+	right := " " + fmtTime(dur) + " ☰ "
+	bw := W - x - len([]rune(right))
+	frac := 0.0
+	if dur > 0 {
+		frac = min(1, pos/dur)
+	}
+	a.slider(x, y, bw, frac, a.tint(), cBar)
+	bx := x
+	a.on(bx, y, bw, 1, func(ev tty.Event, rx, _ int) {
+		if (ev.Action == tty.MousePress || ev.Action == tty.MouseDrag) && ev.Button == tty.ButtonLeft && dur > 0 {
+			a.seek(sliderFrac(rx, bw) * dur)
+		}
+	})
+	s.Text(x+bw, y, right, cDim, cBar, 0, -1)
+	a.on(W-3, y, 3, 1, func(ev tty.Event, _, _ int) {
+		if clicked(ev) {
+			a.toggleMenu(-1)
+		}
+	})
+}
+
+// --- bind modes on the HUD -----------------------------------------------------
+
+type btn struct {
+	label string
+	fg    uint32
+	fn    func(ev tty.Event)
+}
+
+// modeMouse handles the mouse over a mode label: a click switches to mode
+// i, the wheel steps through the modes.
+func (a *App) modeMouse(i int) func(ev tty.Event, rx, ry int) {
+	return func(ev tty.Event, _, _ int) {
+		switch {
+		case clicked(ev):
+			a.setMode(i)
+		case ev.Action == tty.MouseWheelDown:
+			a.setMode(a.mode + 1)
+		case ev.Action == tty.MouseWheelUp:
+			a.setMode(a.mode - 1)
+		}
+	}
+}
+
+// drawModes draws the bind modes on the title bar, the active one in its
+// color, and returns the column after them. A narrow terminal gets only the
+// active one.
+func (a *App) drawModes(x, y int) int {
+	s := a.scr
+	all := s.W >= 76
+	for i, m := range modes {
+		if i != a.mode && !all {
+			continue
+		}
+		label := " " + m.name + " "
+		fg, bg, attr := cDim, cBar, uint8(0)
+		switch {
+		case i == a.mode:
+			label, fg, bg, attr = strings.ToUpper(label), cBar, modeColor(i), engine.AttrBold
+		case a.hover(x, y, len(label), 1):
+			fg, bg = modeColor(i), cHot
+		}
+		next := i
+		if !all {
+			next = a.mode + 1 // the only label on show: a click moves on
+		}
+		a.on(x, y, len(label), 1, a.modeMouse(next))
+		x += s.Text(x, y, label, fg, bg, attr, -1)
+	}
+	if s.W >= 104 {
+		x += s.Text(x, y, " Tab⇄", cDim, cBar, 0, -1)
+	}
+	return x
+}
+
+// drawHints is the line above the seek bar. It lists the keys of the active
+// mode; while a window is open it lists the twelve windows behind the F
+// keys instead. Everything on it can be clicked.
+func (a *App) drawHints(y int) {
+	s := a.scr
+	W := s.W
+	s.Fill(0, y, W, 1, tty.Cell{Ch: ' ', Bg: cBar})
+	a.on(0, y, W, 1, func(tty.Event, int, int) {})
+	if a.curF() >= 0 {
+		return // draw puts the F keys here, over the windows
+	}
+	const more = " F1 all keys "
+	end := W - len(more)
+	s.Text(end, y, more, cDim, cBar, 0, -1)
+	a.on(end, y, len(more), 1, func(ev tty.Event, _, _ int) {
+		if clicked(ev) {
+			a.openF(0)
+		}
+	})
+	tint, m, x := a.tint(), modes[a.mode], 1
+	for i := range m.binds {
+		b := &m.binds[i]
+		if b.short == "" {
+			continue
+		}
+		k, label := prettyKey(strings.Fields(b.keys)[0]), b.short
+		if b == a.lastBind {
+			label += " -/="
+		}
+		w := len([]rune(k)) + 1 + len([]rune(label))
+		if x+w+2 > end {
+			s.Text(x, y, "…", cDim, cBar, 0, -1)
+			break
+		}
+		fg, bg := cDim, cBar
+		switch {
+		case a.hover(x, y, w, 1):
+			fg, bg = cFg, cHot
+			s.Fill(x-1, y, w+2, 1, tty.Cell{Ch: ' ', Bg: bg})
+		case b == a.lastBind:
+			fg = cFg
+		}
+		s.Text(x, y, k, tint, bg, engine.AttrBold, -1)
+		s.Text(x+len([]rune(k))+1, y, label, fg, bg, 0, -1)
+		a.on(x-1, y, w+2, 1, func(ev tty.Event, _, _ int) {
+			dir := 0
+			switch {
+			case clicked(ev), ev.Action == tty.MouseWheelUp:
+				dir = 1
+			case ev.Action == tty.MousePress && ev.Button == tty.ButtonRight, ev.Action == tty.MouseWheelDown:
+				dir = -1
+			}
+			if dir == 0 || (dir < 0 && b.rev == "") {
+				return
+			}
+			if b.rev != "" {
+				a.lastBind = b
+			}
+			b.fn(a, dir)
+		})
+		x += w + 2
+	}
+}
+
+// drawFKeys lists the windows behind F1 – F12 on one line, the open one
+// marked; a click opens one, which helps where the terminal keeps some of
+// the F keys to itself.
+func (a *App) drawFKeys(y int) {
+	s := a.scr
+	cur := a.curF()
+	s.Fill(0, y, s.W, 1, tty.Cell{Ch: ' ', Bg: cBar})
+	a.on(0, y, s.W, 1, func(tty.Event, int, int) {})
+	// Names in full, cut short, or left out: whatever fits.
+	cut := 0
+	for _, c := range []int{99, 4, 0} {
+		total := 0
+		for i, f := range fkeys {
+			total += len(fmt.Sprint(i+1)) + 2 + min(c, len([]rune(f.name))) + min(c, 1)
+		}
+		if cut = c; total+1 <= s.W {
+			break
+		}
+	}
+	x := 1
+	for i, f := range fkeys {
+		name := []rune(f.name)
+		name = name[:min(cut, len(name))]
+		k := "F" + fmt.Sprint(i+1)
+		w := len(k) + len(name) + min(cut, 1)
+		if x+w > s.W {
+			break
+		}
+		fg, bg := cDim, cBar
+		switch {
+		case i == cur:
+			fg, bg = cFg, cSel
+		case a.hover(x-1, y, w+1, 1):
+			fg, bg = cFg, cHot
+		}
+		s.Fill(x-1, y, w+1, 1, tty.Cell{Ch: ' ', Bg: bg})
+		s.Text(x, y, k, cYellow, bg, engine.AttrBold, -1)
+		s.Text(x+len(k)+1, y, string(name), fg, bg, 0, -1)
+		i := i
+		a.on(x-1, y, w+1, 1, func(ev tty.Event, _, _ int) {
+			if clicked(ev) {
+				a.openF(i)
+			}
+		})
+		x += w + 1
+	}
+}
+
+// fxName names the effects in use: the preset they match, none, or custom.
+func (a *App) fxName() string {
+	for _, p := range a.lib.AllFX() {
+		if p.FX == a.s.FX {
+			return p.Name
+		}
+	}
+	return "custom"
+}
+
+// modeButtons are the buttons of the active mode on the bottom bar: what
+// the mode cycles through, and its dice.
+func (a *App) modeButtons() []btn {
+	cyc := func(fn func(dir int)) func(ev tty.Event) {
+		return func(ev tty.Event) {
+			switch {
+			case clicked(ev), ev.Action == tty.MouseWheelDown:
+				fn(1)
+			case ev.Action == tty.MousePress && ev.Button == tty.ButtonRight, ev.Action == tty.MouseWheelUp:
+				fn(-1)
+			}
+		}
+	}
+	option := func(key string) btn {
+		return btn{engine.FindOption(key).String(&a.s), cFg, cyc(func(d int) { a.nudge(key, d) })}
+	}
+	dice := func(fn func()) btn {
+		return btn{"⚄ random", cYellow, func(ev tty.Event) {
+			if clicked(ev) {
+				fn()
+			} else if ev.Action == tty.MousePress && ev.Button == tty.ButtonRight {
+				a.undo()
+			}
+		}}
+	}
+	switch modes[a.mode].name {
+	case "video":
+		return []btn{option("mode"), option("dither"), option("palette"), dice(func() { a.randomize(false) })}
+	case "color":
+		return []btn{{"filter: " + a.s.Filter, cFg, cyc(func(d int) { a.nudge("filter", d) })}, dice(a.randomGrade)}
+	case "fx":
+		return []btn{{"✦ " + a.fxName(), cFg, cyc(a.cycleFX)}, dice(a.randomFX)}
+	case "audio":
+		name := a.soundName
+		switch {
+		case name != "":
+		case a.s.Sound.SoundActive():
+			name = "custom"
+		default:
+			name = "clean"
+		}
+		return []btn{{"♪ " + name, cFg, cyc(a.cycleSound)}, dice(a.randomSound)}
+	}
+	loop := cDim
+	if a.s.Loop {
+		loop = cGreen
+	}
+	out := []btn{
+		{trim(a.s.Speed) + "×", cFg, cyc(func(d int) { a.nudge("speed", d) })},
+		{"loop", loop, func(ev tty.Event) {
+			if clicked(ev) {
+				a.nudge("loop", 1)
+			}
+		}},
+	}
+	if len(a.files) > 1 {
+		out = append(out, btn{fmt.Sprintf("file %d/%d", a.fileIdx+1, len(a.files)), cFg, cyc(a.openNext)})
+	}
+	return append(out, dice(func() { a.randomize(false) }))
 }

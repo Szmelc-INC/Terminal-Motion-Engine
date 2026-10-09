@@ -13,8 +13,11 @@ const (
 	enterSeq = "\x1b[?1049h" + // alternate screen
 		"\x1b[?25l" + // hide cursor
 		"\x1b[?7l" + // no auto-wrap
-		"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h" // mouse: buttons, drag, motion, SGR coords
-	leaveSeq = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l" +
+		"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h" + // mouse: buttons, drag, motion, SGR coords
+		"\x1b[>1u" + // kitty keyboard protocol, so Ctrl+= can be told from =
+		"\x1b]1337;SetUserVar=termo=MQ==\x07" // lets kitty.conf unmap keys while termo has focus
+	leaveSeq = "\x1b]1337;SetUserVar=termo\x07\x1b[<u" +
+		"\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l" +
 		"\x1b[?2026l\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l"
 )
 
