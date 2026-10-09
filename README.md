@@ -7,6 +7,7 @@
 
 </picture><h1><samp><b>𝙩𝙚𝙧𝙢𝙤</b></samp></h1>
 
+
 <table><tr><td>𝚃𝚎𝚛𝚖𝚒𝚗𝚊𝚕 𝙼𝚘𝚝𝚒𝚘𝚗 𝙴𝚗𝚐𝚒𝚗𝚎 · 𝟹.𝟶</td></tr></table>
     <i><samp><h4>𝙿𝚕𝚊𝚢 𝙶𝙸𝙵𝚜 𝚊𝚗𝚍 𝚟𝚒𝚍𝚎𝚘𝚜 𝚒𝚗 𝚝𝚑𝚎 𝚝𝚎𝚛𝚖𝚒𝚗𝚊𝚕 𝚊𝚜 𝙰𝚂𝙲𝙸𝙸 / 𝙰𝙽𝚂𝙸 𝚊𝚛𝚝, with sound, at the source frame rate, without flicker.</h4></samp></i>
 
@@ -51,28 +52,12 @@
 
 > [!TIP]
 > # Demo 🎬
-> <details>
-> <summary><b>Gif / Asciimation</b></summary>
+> ## ***You are looking at Terminal Command Line...***
+> No, this is not a GUI of a video player...
 >
-> Recorded with termo 1.x. Later versions add sound, color palettes, dithering, effects and a full TUI on top of this look.
+> <img width="384" height="216" alt="v3" src="https://github.com/user-attachments/assets/561df610-a31a-4e1b-bb27-6b5491739350" />
 >
-> <p align="left">
->   <img src="https://github.com/user-attachments/assets/faef350c-63e8-4ebc-bdfb-ab74071356b0" alt="termo demo" width="680">
-> </p>
->
-> </details>
-> <details>
-> <summary><b>Music video made with termo</b></summary>
->
-> <p align="left">
->   <a href="https://www.youtube.com/watch?v=KoaDMKpmaZo">
->     <img src="https://github.com/user-attachments/assets/705c763f-06e7-492b-85a0-445b80d48f7a" alt="music video made with termo" width="680">
->   </a>
-> </p>
->
-> Watch it on YouTube: https://www.youtube.com/watch?v=KoaDMKpmaZo
->
-> </details>
+
 
 > [!IMPORTANT]
 > # Quick Install
